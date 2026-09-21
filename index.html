@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f1419" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>香港交通 · 天氣看板</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <h1>香港交通看板</h1>
+      <p class="sub">HK Transit + Weather · 個人示範</p>
+    </div>
+    <div class="meta">
+      <div class="live" id="live-badge">實時</div>
+      <div id="last-updated">更新中…</div>
+      <div id="countdown"></div>
+    </div>
+  </header>
+
+  <section class="card weather-card" id="weather" aria-label="天氣">
+    <div class="weather-icon" id="wx-icon">☁️</div>
+    <div>
+      <div class="weather-temp" id="wx-temp"><span class="skeleton" style="display:inline-block;width:80px;height:36px"></span></div>
+      <div class="weather-cond" id="wx-cond">載入天氣…</div>
+      <div class="weather-details" id="wx-details"></div>
+    </div>
+  </section>
+
+  <div class="section-title">港鐵班次 · MTR Next Train</div>
+  <div id="mtr-list" aria-live="polite"></div>
+
+  <div class="section-title">巴士到站 · Bus ETA</div>
+  <div id="bus-list" aria-live="polite"></div>
+
+  <footer class="hint">
+    改站／路線：編輯專案入面嘅 <code>config.js</code>，儲存後刷新頁面。<br />
+    Weather: 香港天文台開放數據 · Bus: 九巴／龍運 data.etabus.gov.hk<br />
+    MTR: 港鐵 Next Train（rt.data.gov.hk，免 API key）<br />
+    數據僅供參考，請以現場／官方 App 為準。
+  </footer>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
