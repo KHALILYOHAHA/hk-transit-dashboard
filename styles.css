@@ -151,7 +151,8 @@ header .sub {
 }
 
 .bus-card .top,
-.mtr-card .top {
+.mtr-card .top,
+.traffic-card .top {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -317,4 +318,67 @@ footer.hint code {
 @media (min-width: 480px) {
   body { padding: 20px 18px 48px; }
   header h1 { font-size: 1.4rem; }
+}
+
+.traffic-badge {
+  background: #2f6f4e;
+  color: #fff;
+  font-weight: 800;
+  font-size: 0.72rem;
+  padding: 8px 10px;
+  border-radius: 10px;
+  min-width: 52px;
+  text-align: center;
+  letter-spacing: 0.04em;
+  line-height: 1.25;
+}
+
+.traffic-speed-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: stretch;
+}
+
+.traffic-speed-chip {
+  flex: 1;
+  min-width: 120px;
+  background: var(--bg-elev);
+  border-radius: 12px;
+  padding: 12px 14px;
+  text-align: center;
+}
+
+.traffic-speed-chip .speed {
+  font-size: 1.85rem;
+  font-weight: 800;
+  line-height: 1.1;
+  color: var(--good);
+}
+
+.traffic-speed-chip .speed.slow { color: var(--warn); }
+.traffic-speed-chip .speed.jam { color: var(--bad); }
+.traffic-speed-chip .speed .unit {
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-left: 2px;
+}
+
+.traffic-speed-chip .status {
+  margin-top: 4px;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.traffic-speed-chip .meta-line {
+  margin-top: 4px;
+  font-size: 0.68rem;
+  color: var(--text-dim);
+}
+
+.traffic-detectors {
+  margin-top: 8px;
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  line-height: 1.45;
 }

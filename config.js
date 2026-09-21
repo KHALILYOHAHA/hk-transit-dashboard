@@ -25,6 +25,25 @@
  * station 例：CEN 中環、ADM 金鐘、TST 尖沙咀、HOK 香港、TUC 東涌…
  * direction：'UP' | 'DOWN' | 'BOTH'（預設 BOTH，顯示兩個方向）
  * stationNameTc（可選）：顯示用中文站名；唔填會用內建對照表
+ *
+ * ---------- 道路交通（屯門公路等）----------
+ * 運輸署「主要幹道／策略性道路交通數據」開放數據（data.gov.hk）：
+ *   實時車速 Raw XML（約每 1 分鐘）：
+ *     https://resource.data.one.gov.hk/td/traffic-detectors/rawSpeedVol-all.xml
+ *   偵測器位置 CSV（搵 detectorId／路名）：
+ *     https://static.data.gov.hk/td/traffic-data-strategic-major-roads/info/traffic_speed_volume_occ_info.csv
+ *   規格 PDF：
+ *     https://static.data.gov.hk/td/traffic-data-strategic-major-roads/dataspec/dataspec-traffic-data-strategic-major-roads.pdf
+ *   資料集：Traffic Data of Strategic / Major Roads（hk-td-sm_4）
+ *
+ * traffic[] 每項：
+ *   label          顯示標籤
+ *   roadNameTc     路段說明（繁中）
+ *   detectorIds    官方 AID_ID_Number／detector_id 陣列（會取有效車道平均車速）
+ *   （可選）note   補充說明
+ *
+ * 核對例：
+ *   curl -sL "https://resource.data.one.gov.hk/td/traffic-detectors/rawSpeedVol-all.xml" | rg "TDS91011|TDS90027"
  */
 window.HK_DASH_CONFIG = {
   /** 自動刷新秒數 */
@@ -75,6 +94,40 @@ window.HK_DASH_CONFIG = {
       station: 'ADM', // 金鐘
       stationNameTc: '金鐘',
       direction: 'BOTH', // UP=往荃灣、DOWN=往中環
+    },
+  ],
+
+  /**
+   * 道路交通車速（運輸署交通偵測器 Raw Data）
+   * 預設顯示屯門公路兩個方向；改 detectorIds 就得。
+   * 位置表：traffic_speed_volume_occ_info.csv（Road_TC 含「屯門公路」）
+   */
+  traffic: [
+    {
+      label: '屯門公路',
+      roadNameTc: '東行 · 往荃灣／九龍',
+      note: '深井／汀九／轉乘站／麗城一帶偵測器平均',
+      // 官方 detector_id（東行）：
+      detectorIds: [
+        'TDS91011', // 近深井 - 東行 (3)
+        'TDS91010', // 近深井 - 東行 (2)
+        'TDS91008', // 近汀九 - 東行 (5)
+        'TDS91020', // 近屯門公路巴士轉乘站 - 東行 (1)
+        'AID05201', // 近麗城花園一期停車場 - 東行
+      ],
+    },
+    {
+      label: '屯門公路',
+      roadNameTc: '西行 · 往屯門',
+      note: '深井／轉乘站／荃灣路一帶偵測器平均',
+      // 官方 detector_id（西行）：
+      detectorIds: [
+        'TDS90027', // 近深井 - 西行 (3)
+        'TDS90026', // 近深井 - 西行 (2)
+        'TDS90036', // 近屯門公路巴士轉乘站 - 西行 (1)
+        'TDS90037', // 近屯門公路巴士轉乘站 - 西行 (2)
+        'TDS90016', // 近荃灣路 - 西行
+      ],
     },
   ],
 };

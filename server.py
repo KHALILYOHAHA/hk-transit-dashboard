@@ -25,6 +25,8 @@ ALLOWED_HOSTS = {
     "data.weather.gov.hk",
     "api.open-meteo.com",
     "rt.data.gov.hk",
+    "resource.data.one.gov.hk",
+    "static.data.gov.hk",
 }
 
 

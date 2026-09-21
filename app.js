@@ -1,14 +1,18 @@
 /**
  * HK Transit + Weather Dashboard
- * Pure static — HKO weather + KMB bus ETAs + MTR Next Train (official open data).
+ * Pure static — HKO weather + KMB bus ETAs + MTR Next Train + TD traffic detectors
+ * (official open data).
  */
 (function () {
   'use strict';
 
-  const CFG = window.HK_DASH_CONFIG || { stops: [], mtr: [], refreshSeconds: 45 };
+  const CFG = window.HK_DASH_CONFIG || { stops: [], mtr: [], traffic: [], refreshSeconds: 45 };
   const REFRESH_MS = Math.max(15, Number(CFG.refreshSeconds) || 45) * 1000;
   const KMB_BASE = 'https://data.etabus.gov.hk/v1/transport/kmb';
   const MTR_BASE = 'https://rt.data.gov.hk/v1/transport/mtr/getSchedule.php';
+  /** 運輸署主要幹道交通偵測器 Raw 車速（約每 1 分鐘） */
+  const TRAFFIC_RAW =
+    'https://resource.data.one.gov.hk/td/traffic-detectors/rawSpeedVol-all.xml';
   const HKO_RHR = 'https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread&lang=tc';
   const HKO_FLW = 'https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=flw&lang=tc';
   const OPEN_METEO =
@@ -110,6 +114,7 @@
     wxDetails: document.getElementById('wx-details'),
     busList: document.getElementById('bus-list'),
     mtrList: document.getElementById('mtr-list'),
+    trafficList: document.getElementById('traffic-list'),
     lastUpdated: document.getElementById('last-updated'),
     countdown: document.getElementById('countdown'),
   };
@@ -160,6 +165,12 @@
     const res = await fetch(url, { cache: 'no-store' });
     if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
     return res.json();
+  }
+
+  async function fetchText(url) {
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
+    return res.text();
   }
 
   async function loadWeather() {
@@ -522,6 +533,170 @@
     return card;
   }
 
+
+  /** 顯示用車況（唔改 API 數字；只係 UI 顏色／標籤） */
+  function trafficStatusFromSpeed(kmh) {
+    if (kmh == null || Number.isNaN(kmh)) return { key: '', label: '未有數據', klass: '' };
+    if (kmh >= 60) return { key: 'good', label: '暢通', klass: '' };
+    if (kmh >= 40) return { key: 'slow', label: '緩慢', klass: 'slow' };
+    return { key: 'jam', label: '擠塞', klass: 'jam' };
+  }
+
+  /**
+   * 解析運輸署 rawSpeedVol XML → Map(detector_id → {speed, lanes, direction})
+   * 只用 valid=Y 且 1–130 km/h 嘅車道（過高當異常，唔發明數字）。
+   */
+  function parseTrafficRawXml(xmlText) {
+    const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
+    if (doc.querySelector('parsererror')) {
+      throw new Error('交通 XML 解析失敗');
+    }
+    const root = doc.documentElement;
+    const date = root.querySelector('date')?.textContent?.trim() || '';
+    const periods = [...root.querySelectorAll('periods > period')];
+    const period = periods[periods.length - 1];
+    if (!period) throw new Error('交通 XML 未有 period');
+    const periodFrom = period.querySelector('period_from')?.textContent?.trim() || '';
+    const periodTo = period.querySelector('period_to')?.textContent?.trim() || '';
+    const map = new Map();
+    period.querySelectorAll('detectors > detector').forEach((det) => {
+      const id = det.querySelector('detector_id')?.textContent?.trim();
+      if (!id) return;
+      const direction = det.querySelector('direction')?.textContent?.trim() || '';
+      const speeds = [];
+      det.querySelectorAll('lanes > lane').forEach((lane) => {
+        const valid = (lane.querySelector('valid')?.textContent || 'Y').trim().toUpperCase();
+        if (valid !== 'Y') return;
+        const sp = Number(lane.querySelector('speed')?.textContent);
+        if (!Number.isFinite(sp) || sp < 1 || sp > 130) return;
+        speeds.push(sp);
+      });
+      if (!speeds.length) return;
+      const avg = speeds.reduce((a, b) => a + b, 0) / speeds.length;
+      map.set(id, {
+        speed: Math.round(avg * 10) / 10,
+        lanes: speeds.length,
+        direction,
+      });
+    });
+    return { date, periodFrom, periodTo, map };
+  }
+
+  let trafficCache = null;
+  let trafficCacheAt = 0;
+
+  async function loadTrafficSnapshot() {
+    const now = Date.now();
+    // 同一輪 refresh 共用一次 XML（多個路段）
+    if (trafficCache && now - trafficCacheAt < 10000) return trafficCache;
+    const xml = await fetchText(TRAFFIC_RAW);
+    trafficCache = parseTrafficRawXml(xml);
+    trafficCacheAt = now;
+    return trafficCache;
+  }
+
+  async function loadTrafficSegment(cfg) {
+    const ids = (cfg.detectorIds || []).map((x) => String(x).trim()).filter(Boolean);
+    if (!ids.length) throw new Error('config 缺少 detectorIds');
+    const snap = await loadTrafficSnapshot();
+    const found = [];
+    ids.forEach((id) => {
+      const row = snap.map.get(id);
+      if (row) found.push({ id, ...row });
+    });
+    let avg = null;
+    if (found.length) {
+      avg = found.reduce((a, b) => a + b.speed, 0) / found.length;
+      avg = Math.round(avg * 10) / 10;
+    }
+    return {
+      ...cfg,
+      avgSpeed: avg,
+      samples: found,
+      missingIds: ids.filter((id) => !snap.map.has(id)),
+      captureDate: snap.date,
+      periodFrom: snap.periodFrom,
+      periodTo: snap.periodTo,
+      source: 'TD traffic-detectors rawSpeedVol',
+    };
+  }
+
+  function renderTrafficCard(data, err) {
+    const card = document.createElement('section');
+    card.className = 'card traffic-card';
+    if (err) {
+      card.innerHTML = `
+        <div class="top">
+          <div class="traffic-badge">道路</div>
+          <div class="route-meta">
+            <div class="label">${escapeHtml(data.label || '交通')}</div>
+            <div class="dest">載入失敗</div>
+            <div class="stop-name">${escapeHtml(data.roadNameTc || '')}</div>
+          </div>
+        </div>
+        <div class="error-box">${escapeHtml(String(err.message || err))}</div>`;
+      return card;
+    }
+
+    const st = trafficStatusFromSpeed(data.avgSpeed);
+    const speedHtml =
+      data.avgSpeed == null
+        ? `<div class="empty-eta">暫時未有有效車速</div>`
+        : `<div class="traffic-speed-row">
+            <div class="traffic-speed-chip">
+              <div class="speed ${st.klass}">${escapeHtml(String(data.avgSpeed))}<span class="unit">km/h</span></div>
+              <div class="status">${escapeHtml(st.label)}</div>
+              <div class="meta-line">${escapeHtml(
+                data.periodFrom && data.periodTo
+                  ? `${data.captureDate || ''} ${data.periodFrom}–${data.periodTo}`
+                  : data.captureDate || ''
+              )}</div>
+            </div>
+          </div>`;
+
+    const detLine = data.samples?.length
+      ? `<div class="traffic-detectors">偵測器 ${data.samples
+          .map((s) => `${escapeHtml(s.id)} ${escapeHtml(String(s.speed))}km/h`)
+          .join(' · ')}${
+          data.missingIds?.length
+            ? ` · 缺：${data.missingIds.map(escapeHtml).join(', ')}`
+            : ''
+        }</div>`
+      : `<div class="traffic-detectors">未配對到有效偵測器</div>`;
+
+    const note = data.note
+      ? `<div class="stop-name" style="margin-top:6px">${escapeHtml(data.note)}</div>`
+      : '';
+
+    card.innerHTML = `
+      <div class="top">
+        <div class="traffic-badge">道路<br/><span style="font-weight:600;opacity:.9;font-size:0.65rem">TD</span></div>
+        <div class="route-meta">
+          <div class="label">${escapeHtml(data.label || '交通')}</div>
+          <div class="dest">${escapeHtml(data.roadNameTc || '')}</div>
+          <div class="stop-name">運輸署交通偵測器 · 有效車道平均</div>
+        </div>
+      </div>
+      ${speedHtml}
+      ${note}
+      ${detLine}`;
+    return card;
+  }
+
+  function renderTrafficSkeletons() {
+    if (!el.trafficList) return;
+    el.trafficList.innerHTML = '';
+    (CFG.traffic || []).forEach(() => {
+      const card = document.createElement('section');
+      card.className = 'card traffic-card';
+      card.innerHTML = `<div class="skeleton" style="height:28px;width:40%"></div>
+        <div class="skeleton" style="height:20px;width:70%"></div>
+        <div class="skeleton" style="height:48px;margin-top:10px"></div>`;
+      el.trafficList.appendChild(card);
+    });
+  }
+
+
   function escapeHtml(s) {
     return String(s)
       .replace(/&/g, '&amp;')
@@ -558,12 +733,16 @@
   async function refresh() {
     const stops = CFG.stops || [];
     const mtrStops = CFG.mtr || [];
+    const trafficSegs = CFG.traffic || [];
 
     if (!stops.length && el.busList) {
       el.busList.innerHTML = `<div class="card error-box">config.js 未設定任何巴士站點</div>`;
     }
     if (!mtrStops.length && el.mtrList) {
       el.mtrList.innerHTML = `<div class="card empty-eta">config.js 未設定港鐵站（mtr 陣列）</div>`;
+    }
+    if (!trafficSegs.length && el.trafficList) {
+      el.trafficList.innerHTML = `<div class="card empty-eta">config.js 未設定道路交通（traffic 陣列）</div>`;
     }
 
     const wxPromise = loadWeather()
@@ -588,9 +767,22 @@
       }
     });
 
-    const [busCards, mtrCards] = await Promise.all([
+    // 重置 cache，令每次 refresh 拉最新 XML
+    trafficCache = null;
+    trafficCacheAt = 0;
+    const trafficPromises = trafficSegs.map(async (s) => {
+      try {
+        const data = await loadTrafficSegment(s);
+        return renderTrafficCard(data);
+      } catch (err) {
+        return renderTrafficCard(s, err);
+      }
+    });
+
+    const [busCards, mtrCards, trafficCards] = await Promise.all([
       Promise.all(busPromises),
       Promise.all(mtrPromises),
+      Promise.all(trafficPromises),
       wxPromise,
     ]);
 
@@ -601,6 +793,10 @@
     if (mtrStops.length && el.mtrList) {
       el.mtrList.innerHTML = '';
       mtrCards.forEach((c) => el.mtrList.appendChild(c));
+    }
+    if (trafficSegs.length && el.trafficList) {
+      el.trafficList.innerHTML = '';
+      trafficCards.forEach((c) => el.trafficList.appendChild(c));
     }
 
     el.lastUpdated.textContent = `更新 ${formatHkTime(new Date())} HKT`;
@@ -618,6 +814,7 @@
   async function loop() {
     renderBusSkeletons();
     renderMtrSkeletons();
+    renderTrafficSkeletons();
     try {
       await refresh();
     } catch (e) {
