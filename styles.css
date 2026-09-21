@@ -30,7 +30,7 @@ html, body {
 
 body {
   padding: 12px 14px 40px;
-  max-width: 560px;
+  max-width: 960px;
   margin: 0 auto;
 }
 
@@ -93,6 +93,7 @@ header .sub {
   padding: 14px 16px;
   margin-bottom: 12px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  min-width: 0;
 }
 
 .weather-card {
@@ -150,9 +151,65 @@ header .sub {
   margin: 18px 4px 8px;
 }
 
+/* Traffic: 2 columns side-by-side on wider screens */
+.traffic-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0 12px;
+}
+
+/* ETA: 3 columns — bus | placeholder | mtr */
+.eta-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0 12px;
+}
+
+@media (min-width: 640px) {
+  .traffic-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .eta-grid {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+  .traffic-grid .card,
+  .eta-grid .card {
+    margin-bottom: 12px;
+    height: 100%;
+  }
+}
+
+/* Narrow phones: keep compact 3-col if still readable */
+@media (max-width: 639px) and (min-width: 420px) {
+  .eta-grid {
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0 8px;
+  }
+  .eta-grid .card {
+    padding: 10px 10px;
+  }
+  .eta-grid .route-badge,
+  .eta-grid .mtr-badge {
+    min-width: 42px;
+    font-size: 0.95rem;
+    padding: 5px 8px;
+  }
+  .eta-grid .route-meta .dest {
+    font-size: 0.85rem;
+  }
+  .eta-grid .eta-chip {
+    min-width: 64px;
+    padding: 8px 6px;
+  }
+  .eta-grid .eta-chip .mins {
+    font-size: 1.35rem;
+  }
+}
+
 .bus-card .top,
 .mtr-card .top,
-.traffic-card .top {
+.traffic-card .top,
+.placeholder-card .top {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -171,6 +228,10 @@ header .sub {
   letter-spacing: 0.02em;
 }
 
+.route-badge.ctb {
+  background: #e85d04;
+}
+
 .mtr-badge {
   background: var(--mtr);
   color: #fff;
@@ -182,6 +243,30 @@ header .sub {
   text-align: center;
   letter-spacing: 0.04em;
   line-height: 1.25;
+}
+
+.placeholder-badge {
+  background: var(--bg-elev);
+  color: var(--text-dim);
+  font-weight: 700;
+  font-size: 0.72rem;
+  padding: 8px 10px;
+  border-radius: 10px;
+  min-width: 52px;
+  text-align: center;
+  border: 1px dashed var(--border);
+}
+
+.placeholder-card {
+  opacity: 0.72;
+  border-style: dashed;
+}
+
+.placeholder-card .placeholder-body {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  line-height: 1.45;
+  padding: 4px 2px 2px;
 }
 
 .route-meta {
@@ -342,7 +427,7 @@ footer.hint code {
 
 .traffic-speed-chip {
   flex: 1;
-  min-width: 120px;
+  min-width: 100px;
   background: var(--bg-elev);
   border-radius: 12px;
   padding: 12px 14px;
@@ -381,4 +466,5 @@ footer.hint code {
   font-size: 0.68rem;
   color: var(--text-dim);
   line-height: 1.45;
+  word-break: break-all;
 }

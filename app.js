@@ -1,14 +1,21 @@
 /**
  * HK Transit + Weather Dashboard
- * Pure static — HKO weather + KMB bus ETAs + MTR Next Train + TD traffic detectors
+ * Pure static — HKO weather + KMB/CTB bus ETAs + MTR Next Train + TD traffic detectors
  * (official open data).
  */
 (function () {
   'use strict';
 
-  const CFG = window.HK_DASH_CONFIG || { stops: [], mtr: [], traffic: [], refreshSeconds: 45 };
+  const CFG = window.HK_DASH_CONFIG || {
+    stops: [],
+    mtr: [],
+    traffic: [],
+    transit: [],
+    refreshSeconds: 45,
+  };
   const REFRESH_MS = Math.max(15, Number(CFG.refreshSeconds) || 45) * 1000;
   const KMB_BASE = 'https://data.etabus.gov.hk/v1/transport/kmb';
+  const CTB_BASE = 'https://rt.data.gov.hk/v2/transport/citybus';
   const MTR_BASE = 'https://rt.data.gov.hk/v1/transport/mtr/getSchedule.php';
   /** 運輸署主要幹道交通偵測器 Raw 車速（約每 1 分鐘） */
   const TRAFFIC_RAW =
@@ -112,8 +119,7 @@
     wxTemp: document.getElementById('wx-temp'),
     wxCond: document.getElementById('wx-cond'),
     wxDetails: document.getElementById('wx-details'),
-    busList: document.getElementById('bus-list'),
-    mtrList: document.getElementById('mtr-list'),
+    etaList: document.getElementById('eta-list'),
     trafficList: document.getElementById('traffic-list'),
     lastUpdated: document.getElementById('last-updated'),
     countdown: document.getElementById('countdown'),
@@ -121,6 +127,33 @@
 
   let nextRefreshAt = 0;
   let tickTimer = null;
+
+  /**
+   * Prefer transit[] (ordered ETA row). Fall back to legacy stops[] + mtr[]
+   * if transit is missing/empty.
+   */
+  function resolveTransitList() {
+    if (Array.isArray(CFG.transit) && CFG.transit.length) {
+      return CFG.transit.map((item) => {
+        const type = String(item.type || item.company || '').toLowerCase();
+        if (type === 'kmb' || type === 'ctb' || type === 'mtr' || type === 'placeholder') {
+          return { ...item, type };
+        }
+        // Infer from fields
+        if (item.line && item.station) return { ...item, type: 'mtr' };
+        if (item.company === 'ctb' || item.company === 'CTB') return { ...item, type: 'ctb' };
+        if (item.stopId || item.route) return { ...item, type: 'kmb', company: 'kmb' };
+        return { ...item, type: 'placeholder' };
+      });
+    }
+    const out = [];
+    (CFG.stops || []).forEach((s) => {
+      const company = String(s.company || 'kmb').toLowerCase();
+      out.push({ ...s, type: company === 'ctb' ? 'ctb' : 'kmb', company });
+    });
+    (CFG.mtr || []).forEach((s) => out.push({ ...s, type: 'mtr' }));
+    return out;
+  }
 
   function formatHkTime(d) {
     const parts = new Intl.DateTimeFormat('zh-HK', {
@@ -250,10 +283,7 @@
       .join('');
   }
 
-  async function loadBusEta(stopCfg) {
-    if (stopCfg.company !== 'kmb') {
-      throw new Error(`未支援公司：${stopCfg.company}`);
-    }
+  async function loadKmbEta(stopCfg) {
     const url = `${KMB_BASE}/eta/${encodeURIComponent(stopCfg.stopId)}/${encodeURIComponent(stopCfg.route)}/${encodeURIComponent(stopCfg.serviceType || 1)}`;
     const json = await fetchJson(url);
     let rows = Array.isArray(json.data) ? json.data : [];
@@ -281,12 +311,71 @@
 
     return {
       ...stopCfg,
+      company: 'kmb',
       stopNameTc,
       stopNameEn,
       destTc,
       destEn,
-      etas: rows,
+      etas: rows.map((r) => ({
+        eta: r.eta,
+        rmk_tc: r.rmk_tc || '',
+        dest_tc: r.dest_tc,
+      })),
     };
+  }
+
+  /**
+   * Citybus ETA (prepared for middle slot).
+   * API: /v2/transport/citybus/eta/CTB/{stopId}/{route}
+   * Optional dir filter: stopCfg.bound 'O'|'I' maps to API dir outbound/inbound
+   *   (CTB uses dir "O"/"I" in eta payload similarly).
+   */
+  async function loadCtbEta(stopCfg) {
+    const stopId = stopCfg.stopId;
+    const route = stopCfg.route;
+    if (!stopId || !route) throw new Error('CTB config 缺少 stopId 或 route');
+    const url = `${CTB_BASE}/eta/CTB/${encodeURIComponent(stopId)}/${encodeURIComponent(route)}`;
+    const json = await fetchJson(url);
+    let rows = Array.isArray(json.data) ? json.data : [];
+    const bound = (stopCfg.bound || stopCfg.dir || '').toUpperCase();
+    if (bound === 'O' || bound === 'I') {
+      rows = rows.filter((r) => (r.dir || '').toUpperCase() === bound);
+    }
+    rows = rows
+      .filter((r) => r.eta)
+      .sort((a, b) => (a.eta_seq || 0) - (b.eta_seq || 0) || String(a.eta).localeCompare(String(b.eta)))
+      .slice(0, 3);
+
+    let stopNameTc = stopCfg.stopNameTc;
+    let stopNameEn = stopCfg.stopNameEn;
+    if (!stopNameTc) {
+      try {
+        const s = await fetchJson(`${CTB_BASE}/stop/${encodeURIComponent(stopId)}`);
+        stopNameTc = s.data?.name_tc;
+        stopNameEn = s.data?.name_en;
+      } catch (_) { /* ignore */ }
+    }
+
+    return {
+      ...stopCfg,
+      company: 'ctb',
+      stopNameTc,
+      stopNameEn,
+      destTc: rows[0]?.dest_tc || '',
+      destEn: rows[0]?.dest_en || '',
+      etas: rows.map((r) => ({
+        eta: r.eta,
+        rmk_tc: r.rmk_tc || '',
+        dest_tc: r.dest_tc,
+      })),
+    };
+  }
+
+  async function loadBusEta(stopCfg) {
+    const company = String(stopCfg.company || stopCfg.type || 'kmb').toLowerCase();
+    if (company === 'ctb') return loadCtbEta(stopCfg);
+    if (company === 'kmb') return loadKmbEta(stopCfg);
+    throw new Error(`未支援公司：${company}`);
   }
 
   function renderEtaChips(items) {
@@ -323,13 +412,14 @@
 
   function renderBusCard(data, err) {
     const card = document.createElement('section');
+    const isCtb = String(data.company || data.type || '').toLowerCase() === 'ctb';
     card.className = 'card bus-card';
     if (err) {
       card.innerHTML = `
         <div class="top">
-          <div class="route-badge">${escapeHtml(data.route || '?')}</div>
+          <div class="route-badge ${isCtb ? 'ctb' : ''}">${escapeHtml(data.route || '?')}</div>
           <div class="route-meta">
-            <div class="label">${escapeHtml(data.label || '')}</div>
+            <div class="label">${escapeHtml(data.label || (isCtb ? 'CTB' : 'KMB'))}</div>
             <div class="dest">載入失敗</div>
             <div class="stop-name">${escapeHtml(data.stopNameTc || data.stopId || '')}</div>
           </div>
@@ -347,7 +437,7 @@
           : '';
 
     const chips = renderEtaChips(
-      data.etas.map((e) => ({
+      (data.etas || []).map((e) => ({
         eta: e.eta,
         rmk: e.rmk_tc || '',
       }))
@@ -355,9 +445,9 @@
 
     card.innerHTML = `
       <div class="top">
-        <div class="route-badge">${escapeHtml(data.route)}</div>
+        <div class="route-badge ${isCtb ? 'ctb' : ''}">${escapeHtml(data.route)}</div>
         <div class="route-meta">
-          <div class="label">${escapeHtml(data.label || 'KMB')}</div>
+          <div class="label">${escapeHtml(data.label || (isCtb ? '城巴 CTB' : 'KMB'))}</div>
           <div class="dest" title="${escapeHtml(data.destEn || '')}">${escapeHtml(dest)}</div>
           <div class="stop-name">${escapeHtml(data.stopNameTc || '')}${
             data.stopNameEn ? ` · <span style="opacity:.8">${escapeHtml(data.stopNameEn)}</span>` : ''
@@ -365,6 +455,24 @@
         </div>
       </div>
       ${chips}`;
+    return card;
+  }
+
+  function renderPlaceholderCard(cfg) {
+    const card = document.createElement('section');
+    card.className = 'card placeholder-card';
+    card.innerHTML = `
+      <div class="top">
+        <div class="placeholder-badge">待定</div>
+        <div class="route-meta">
+          <div class="label">占位</div>
+          <div class="dest">${escapeHtml(cfg.label || '待確認')}</div>
+          <div class="stop-name">未設定</div>
+        </div>
+      </div>
+      <div class="placeholder-body">${escapeHtml(
+        cfg.note || '請於 config.js 填入 stopId／route 後啟用'
+      )}</div>`;
     return card;
   }
 
@@ -508,7 +616,12 @@
     if (dir === 'UP') {
       body = renderMtrDirBlock('上行 UP', data.up);
     } else if (dir === 'DOWN') {
-      body = renderMtrDirBlock('下行 DOWN', data.down);
+      // Personal layout: DOWN only toward WKS — label clearly
+      const destHint =
+        data.down?.[0]?.destTc || data.down?.[0]?.dest
+          ? `下行 · 往 ${data.down[0].destTc || data.down[0].dest}`
+          : '下行 · 往烏溪沙';
+      body = renderMtrDirBlock(destHint, data.down);
     } else {
       body =
         renderMtrDirBlock('上行 UP', data.up) +
@@ -533,6 +646,32 @@
     return card;
   }
 
+  async function loadTransitItem(item) {
+    const type = String(item.type || '').toLowerCase();
+    if (type === 'placeholder') {
+      return renderPlaceholderCard(item);
+    }
+    if (type === 'mtr') {
+      try {
+        const data = await loadMtrEta(item);
+        return renderMtrCard(data);
+      } catch (err) {
+        return renderMtrCard(item, err);
+      }
+    }
+    if (type === 'kmb' || type === 'ctb') {
+      try {
+        const data = await loadBusEta({ ...item, company: type });
+        return renderBusCard(data);
+      } catch (err) {
+        return renderBusCard({ ...item, company: type }, err);
+      }
+    }
+    return renderPlaceholderCard({
+      label: item.label || '未知類型',
+      note: `未支援 type：${type || '?'}`,
+    });
+  }
 
   /** 顯示用車況（唔改 API 數字；只係 UI 顏色／標籤） */
   function trafficStatusFromSpeed(kmh) {
@@ -696,7 +835,6 @@
     });
   }
 
-
   function escapeHtml(s) {
     return String(s)
       .replace(/&/g, '&amp;')
@@ -705,41 +843,28 @@
       .replace(/"/g, '&quot;');
   }
 
-  function renderBusSkeletons() {
-    el.busList.innerHTML = '';
-    (CFG.stops || []).forEach(() => {
+  function renderEtaSkeletons() {
+    if (!el.etaList) return;
+    el.etaList.innerHTML = '';
+    const items = resolveTransitList();
+    items.forEach((item) => {
       const card = document.createElement('section');
-      card.className = 'card bus-card';
+      const t = item.type;
+      card.className =
+        t === 'mtr' ? 'card mtr-card' : t === 'placeholder' ? 'card placeholder-card' : 'card bus-card';
       card.innerHTML = `<div class="skeleton" style="height:28px;width:40%"></div>
         <div class="skeleton" style="height:20px;width:70%"></div>
         <div class="skeleton" style="height:48px;margin-top:10px"></div>`;
-      el.busList.appendChild(card);
-    });
-  }
-
-  function renderMtrSkeletons() {
-    if (!el.mtrList) return;
-    el.mtrList.innerHTML = '';
-    (CFG.mtr || []).forEach(() => {
-      const card = document.createElement('section');
-      card.className = 'card mtr-card';
-      card.innerHTML = `<div class="skeleton" style="height:28px;width:40%"></div>
-        <div class="skeleton" style="height:20px;width:70%"></div>
-        <div class="skeleton" style="height:48px;margin-top:10px"></div>`;
-      el.mtrList.appendChild(card);
+      el.etaList.appendChild(card);
     });
   }
 
   async function refresh() {
-    const stops = CFG.stops || [];
-    const mtrStops = CFG.mtr || [];
+    const transitItems = resolveTransitList();
     const trafficSegs = CFG.traffic || [];
 
-    if (!stops.length && el.busList) {
-      el.busList.innerHTML = `<div class="card error-box">config.js 未設定任何巴士站點</div>`;
-    }
-    if (!mtrStops.length && el.mtrList) {
-      el.mtrList.innerHTML = `<div class="card empty-eta">config.js 未設定港鐵站（mtr 陣列）</div>`;
+    if (!transitItems.length && el.etaList) {
+      el.etaList.innerHTML = `<div class="card error-box">config.js 未設定 transit（或 stops／mtr）</div>`;
     }
     if (!trafficSegs.length && el.trafficList) {
       el.trafficList.innerHTML = `<div class="card empty-eta">config.js 未設定道路交通（traffic 陣列）</div>`;
@@ -749,23 +874,7 @@
       .then((wx) => renderWeather(wx))
       .catch((err) => renderWeather(null, err));
 
-    const busPromises = stops.map(async (s) => {
-      try {
-        const data = await loadBusEta(s);
-        return renderBusCard(data);
-      } catch (err) {
-        return renderBusCard(s, err);
-      }
-    });
-
-    const mtrPromises = mtrStops.map(async (s) => {
-      try {
-        const data = await loadMtrEta(s);
-        return renderMtrCard(data);
-      } catch (err) {
-        return renderMtrCard(s, err);
-      }
-    });
+    const etaPromises = transitItems.map((item) => loadTransitItem(item));
 
     // 重置 cache，令每次 refresh 拉最新 XML
     trafficCache = null;
@@ -779,20 +888,15 @@
       }
     });
 
-    const [busCards, mtrCards, trafficCards] = await Promise.all([
-      Promise.all(busPromises),
-      Promise.all(mtrPromises),
+    const [etaCards, trafficCards] = await Promise.all([
+      Promise.all(etaPromises),
       Promise.all(trafficPromises),
       wxPromise,
     ]);
 
-    if (stops.length && el.busList) {
-      el.busList.innerHTML = '';
-      busCards.forEach((c) => el.busList.appendChild(c));
-    }
-    if (mtrStops.length && el.mtrList) {
-      el.mtrList.innerHTML = '';
-      mtrCards.forEach((c) => el.mtrList.appendChild(c));
+    if (transitItems.length && el.etaList) {
+      el.etaList.innerHTML = '';
+      etaCards.forEach((c) => el.etaList.appendChild(c));
     }
     if (trafficSegs.length && el.trafficList) {
       el.trafficList.innerHTML = '';
@@ -812,8 +916,7 @@
   }
 
   async function loop() {
-    renderBusSkeletons();
-    renderMtrSkeletons();
+    renderEtaSkeletons();
     renderTrafficSkeletons();
     try {
       await refresh();
@@ -824,8 +927,8 @@
     setTimeout(loop, REFRESH_MS);
   }
 
-  if (!CFG.stops && el.busList) {
-    el.busList.innerHTML = `<div class="card error-box">缺少 config.js</div>`;
+  if (!window.HK_DASH_CONFIG && el.etaList) {
+    el.etaList.innerHTML = `<div class="card error-box">缺少 config.js</div>`;
   }
   loop();
 })();
