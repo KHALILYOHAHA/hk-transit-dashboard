@@ -25,6 +25,21 @@ python3 server.py
 # 預設 http://127.0.0.1:8765/ ，並提供 /proxy?url=...
 ```
 
+
+## 搜巴士路線 / Look up any bus route
+
+頁面底部「**搜巴士路線**」可以輸入路線號碼（例如 `258D`、`1A`、`969`、`960`）即時查站序同到站時間，**唔使改 `config.js`**。上面固定三欄 ETA 同道路交通唔會被搜尋覆蓋。
+
+用法：
+
+1. 輸入路線，撳「搜索」或按 Enter（唔會喺打字途中不斷拉 API）。
+2. 如果九巴／龍運同城巴都有呢條線，用分段掣揀公司。
+3. 揀方向（起點 → 終點；特別班次會標示服務類型）。
+4. 喺站列表撳一個站，就會顯示該站該線嘅實時 ETA（約每 45 秒同固定欄一齊刷新）。
+5. 可撳「針選此站」記住呢次查詢（存喺瀏覽器 `localStorage`，刷新後會還原）。**唔會自動改 `config.js` 嘅固定欄。**
+
+資料來源：九巴／龍運 `data.etabus.gov.hk`、城巴 `rt.data.gov.hk` 公開 API。
+
 ## 點改站 / Change stops & routes
 
 編輯 **`config.js`**，儲存後刷新頁面。
@@ -150,10 +165,10 @@ curl "https://rt.data.gov.hk/v1/transport/mtr/getSchedule.php?line=TWL&sta=ADM&l
 
 ```
 /workspace/hk-transit-dashboard/
-  index.html    # 單頁 UI（天氣 + 道路 + 港鐵 + 巴士）
+  index.html    # 單頁 UI（天氣 + 道路 + 港鐵 + 巴士 + 路線搜尋）
   styles.css    # 手機優先深色樣式
-  app.js        # 拉天氣 + 道路車速 + 巴士 ETA + 港鐵班次、倒數、刷新
-  config.js     # ← 你改呢度（stops + mtr + traffic）
+  app.js        # 拉天氣 + 道路車速 + 巴士／港鐵 ETA、路線搜尋、倒數、刷新
+  config.js     # ← 固定欄改呢度（transit + traffic）；搜尋唔使改呢度
   server.py     # （可選）靜態檔 + 白名單 proxy
   README.md
 ```

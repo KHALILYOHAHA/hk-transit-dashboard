@@ -123,6 +123,14 @@
     trafficList: document.getElementById('traffic-list'),
     lastUpdated: document.getElementById('last-updated'),
     countdown: document.getElementById('countdown'),
+    searchForm: document.getElementById('bus-search-form'),
+    searchInput: document.getElementById('bus-search-input'),
+    searchBtn: document.getElementById('bus-search-btn'),
+    searchStatus: document.getElementById('bus-search-status'),
+    searchCompanies: document.getElementById('bus-search-companies'),
+    searchDirs: document.getElementById('bus-search-dirs'),
+    searchStops: document.getElementById('bus-search-stops'),
+    searchEta: document.getElementById('bus-search-eta'),
   };
 
   let nextRefreshAt = 0;
@@ -859,6 +867,647 @@
     });
   }
 
+  /* ---------- 搜巴士路線（獨立於固定 transit[] 三欄） ---------- */
+  const SEARCH_LS_KEY = 'hkDashBusSearch';
+  const searchState = {
+    route: '',
+    company: '',
+    companies: [],
+    variants: { kmb: [], ctb: [] },
+    bound: '',
+    serviceType: '1',
+    stops: [],
+    stopId: '',
+    stopNameTc: '',
+  };
+
+  /** 九巴／龍運路線目錄（首次搜索後 session 內重用；唔係全港站列表） */
+  const kmbRouteCatalog = { data: null, promise: null };
+  /** key: company:route:inbound|outbound:serviceType → [{stopId,seq}] */
+  const routeStopCache = new Map();
+  /** key: company:stopId → {name_tc,name_en} */
+  const stopNameCache = new Map();
+
+  function normalizeRoute(input) {
+    return String(input || '')
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g, '');
+  }
+
+  function companyLabel(co) {
+    return co === 'ctb' ? '城巴' : '九巴／龍運';
+  }
+
+  function setSearchStatus(msg, isError) {
+    const box = el.searchStatus;
+    if (!box) return;
+    if (!msg) {
+      box.hidden = true;
+      box.textContent = '';
+      box.classList.remove('is-error');
+      return;
+    }
+    box.hidden = false;
+    box.textContent = msg;
+    box.classList.toggle('is-error', !!isError);
+  }
+
+  function clearSearchPanels(level) {
+    // level: 'all' | 'dirs' | 'stops' | 'eta'
+    if (level === 'all' && el.searchCompanies) {
+      el.searchCompanies.hidden = true;
+      el.searchCompanies.innerHTML = '';
+    }
+    if ((level === 'all' || level === 'dirs') && el.searchDirs) {
+      el.searchDirs.hidden = true;
+      el.searchDirs.innerHTML = '';
+    }
+    if ((level === 'all' || level === 'dirs' || level === 'stops') && el.searchStops) {
+      el.searchStops.hidden = true;
+      el.searchStops.innerHTML = '';
+    }
+    if (el.searchEta) el.searchEta.innerHTML = '';
+    if (level === 'all' || level === 'dirs') {
+      searchState.bound = '';
+      searchState.serviceType = '1';
+      searchState.stops = [];
+      searchState.stopId = '';
+      searchState.stopNameTc = '';
+    } else if (level === 'stops') {
+      searchState.stops = [];
+      searchState.stopId = '';
+      searchState.stopNameTc = '';
+    } else if (level === 'eta') {
+      searchState.stopId = '';
+      searchState.stopNameTc = '';
+    }
+  }
+
+  async function loadKmbRouteCatalog() {
+    if (kmbRouteCatalog.data) return kmbRouteCatalog.data;
+    if (kmbRouteCatalog.promise) return kmbRouteCatalog.promise;
+    kmbRouteCatalog.promise = fetchJson(`${KMB_BASE}/route`).then((json) => {
+      kmbRouteCatalog.data = Array.isArray(json.data) ? json.data : [];
+      return kmbRouteCatalog.data;
+    });
+    try {
+      return await kmbRouteCatalog.promise;
+    } catch (err) {
+      kmbRouteCatalog.promise = null;
+      throw err;
+    }
+  }
+
+  async function lookupKmbVariants(route) {
+    const all = await loadKmbRouteCatalog();
+    return all
+      .filter((r) => String(r.route || '').toUpperCase() === route)
+      .map((r) => ({
+        company: 'kmb',
+        route,
+        bound: String(r.bound || '').toUpperCase(),
+        serviceType: String(r.service_type || '1'),
+        orig_tc: r.orig_tc || '',
+        orig_en: r.orig_en || '',
+        dest_tc: r.dest_tc || '',
+        dest_en: r.dest_en || '',
+      }));
+  }
+
+  function ctbRouteExists(data) {
+    if (!data) return false;
+    if (Array.isArray(data)) return data.length > 0 && ctbRouteExists(data[0]);
+    return !!(data.route || data.orig_tc || data.dest_tc || data.orig_en);
+  }
+
+  async function lookupCtbRoute(route) {
+    const json = await fetchJson(`${CTB_BASE}/route/CTB/${encodeURIComponent(route)}`);
+    const raw = json && json.data;
+    if (!ctbRouteExists(raw)) return null;
+    const d = Array.isArray(raw) ? raw[0] : raw;
+    if (d.route && String(d.route).toUpperCase() !== route) return null;
+    return {
+      company: 'ctb',
+      route,
+      orig_tc: d.orig_tc || '',
+      orig_en: d.orig_en || '',
+      dest_tc: d.dest_tc || '',
+      dest_en: d.dest_en || '',
+    };
+  }
+
+  async function fetchRouteStopIds(company, route, bound, serviceType) {
+    const dir = String(bound).toUpperCase() === 'I' ? 'inbound' : 'outbound';
+    const st = String(serviceType || '1');
+    const cacheKey = `${company}:${route}:${dir}:${st}:ids`;
+    if (routeStopCache.has(cacheKey)) return routeStopCache.get(cacheKey);
+    const url =
+      company === 'ctb'
+        ? `${CTB_BASE}/route-stop/CTB/${encodeURIComponent(route)}/${dir}`
+        : `${KMB_BASE}/route-stop/${encodeURIComponent(route)}/${dir}/${encodeURIComponent(st)}`;
+    const json = await fetchJson(url);
+    const rows = Array.isArray(json.data) ? json.data : [];
+    const stops = rows
+      .map((r) => ({
+        stopId: r.stop,
+        seq: Number(r.seq) || 0,
+      }))
+      .filter((s) => s.stopId)
+      .sort((a, b) => a.seq - b.seq);
+    routeStopCache.set(cacheKey, stops);
+    return stops;
+  }
+
+  async function fetchStopName(company, stopId) {
+    const key = `${company}:${stopId}`;
+    if (stopNameCache.has(key)) return stopNameCache.get(key);
+    const url =
+      company === 'ctb'
+        ? `${CTB_BASE}/stop/${encodeURIComponent(stopId)}`
+        : `${KMB_BASE}/stop/${encodeURIComponent(stopId)}`;
+    try {
+      const json = await fetchJson(url);
+      const d = json.data || {};
+      const name = { name_tc: d.name_tc || '', name_en: d.name_en || '' };
+      stopNameCache.set(key, name);
+      return name;
+    } catch (_) {
+      const name = { name_tc: '', name_en: '' };
+      stopNameCache.set(key, name);
+      return name;
+    }
+  }
+
+  async function mapPool(items, limit, fn) {
+    const ret = new Array(items.length);
+    let i = 0;
+    async function worker() {
+      while (i < items.length) {
+        const idx = i++;
+        ret[idx] = await fn(items[idx], idx);
+      }
+    }
+    const n = Math.min(Math.max(1, limit), Math.max(1, items.length));
+    if (!items.length) return ret;
+    await Promise.all(Array.from({ length: n }, () => worker()));
+    return ret;
+  }
+
+  async function hydrateStopNames(company, stops) {
+    await mapPool(stops, 8, (s) => fetchStopName(company, s.stopId));
+    return stops.map((s) => {
+      const n = stopNameCache.get(`${company}:${s.stopId}`) || {};
+      return { ...s, name_tc: n.name_tc || s.stopId, name_en: n.name_en || '' };
+    });
+  }
+
+  async function lookupCtbDirections(route, meta) {
+    const candidates = [
+      {
+        company: 'ctb',
+        route,
+        bound: 'O',
+        serviceType: '1',
+        orig_tc: meta.orig_tc,
+        orig_en: meta.orig_en,
+        dest_tc: meta.dest_tc,
+        dest_en: meta.dest_en,
+      },
+      {
+        company: 'ctb',
+        route,
+        bound: 'I',
+        serviceType: '1',
+        orig_tc: meta.dest_tc,
+        orig_en: meta.dest_en,
+        dest_tc: meta.orig_tc,
+        dest_en: meta.orig_en,
+      },
+    ];
+    const out = [];
+    for (const v of candidates) {
+      try {
+        const ids = await fetchRouteStopIds('ctb', route, v.bound, '1');
+        if (ids.length) out.push(v);
+      } catch (_) {
+        /* 呢個方向冇站序就跳過 */
+      }
+    }
+    return out;
+  }
+
+  function loadSavedSearch() {
+    try {
+      const raw = localStorage.getItem(SEARCH_LS_KEY);
+      if (!raw) return null;
+      const o = JSON.parse(raw);
+      if (!o || !o.route) return null;
+      return o;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function saveSearchSelection() {
+    if (!searchState.route || !searchState.company || !searchState.stopId) return;
+    try {
+      localStorage.setItem(
+        SEARCH_LS_KEY,
+        JSON.stringify({
+          route: searchState.route,
+          company: searchState.company,
+          bound: searchState.bound,
+          serviceType: searchState.serviceType || '1',
+          stopId: searchState.stopId,
+          stopNameTc: searchState.stopNameTc || '',
+        })
+      );
+    } catch (_) {
+      /* private mode 等 */
+    }
+  }
+
+  function clearSavedSearch() {
+    try {
+      localStorage.removeItem(SEARCH_LS_KEY);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  function isCurrentPinned() {
+    const saved = loadSavedSearch();
+    return !!(
+      saved &&
+      saved.route === searchState.route &&
+      saved.company === searchState.company &&
+      saved.bound === searchState.bound &&
+      String(saved.serviceType || '1') === String(searchState.serviceType || '1') &&
+      saved.stopId === searchState.stopId
+    );
+  }
+
+  function renderCompanyTabs() {
+    const box = el.searchCompanies;
+    if (!box) return;
+    const cos = searchState.companies;
+    box.innerHTML = '';
+    if (!cos.length) {
+      box.hidden = true;
+      return;
+    }
+    // 只有一間公司都顯示標籤，方便確認來源
+    cos.forEach((co) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `search-chip${co === 'ctb' ? ' ctb' : ''}`;
+      btn.setAttribute('role', 'tab');
+      btn.setAttribute('aria-pressed', co === searchState.company ? 'true' : 'false');
+      btn.textContent = companyLabel(co);
+      btn.addEventListener('click', () => {
+        if (searchState.company === co) return;
+        selectCompany(co);
+      });
+      box.appendChild(btn);
+    });
+    box.hidden = false;
+  }
+
+  function renderDirectionChips() {
+    const box = el.searchDirs;
+    if (!box) return;
+    const variants = searchState.variants[searchState.company] || [];
+    box.innerHTML = '';
+    if (!variants.length) {
+      box.hidden = true;
+      return;
+    }
+    variants.forEach((v) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'search-chip';
+      const active =
+        searchState.bound === v.bound &&
+        String(searchState.serviceType || '1') === String(v.serviceType || '1');
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      const arrow = `${v.orig_tc || '起點'} → ${v.dest_tc || '終點'}`;
+      const extra =
+        String(v.serviceType || '1') !== '1' ? ` · 特別班次 ${v.serviceType}` : '';
+      const boundTag = v.bound === 'I' ? '回程' : '去程';
+      btn.textContent = `${arrow}${extra}`;
+      btn.title = `${boundTag}${extra}`;
+      btn.addEventListener('click', () => {
+        selectDirection(v);
+      });
+      box.appendChild(btn);
+    });
+    box.hidden = false;
+  }
+
+  function renderStopList() {
+    const box = el.searchStops;
+    if (!box) return;
+    box.innerHTML = '';
+    const stops = searchState.stops || [];
+    if (!stops.length) {
+      box.hidden = true;
+      return;
+    }
+    stops.forEach((s) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'search-stop';
+      btn.setAttribute('aria-pressed', s.stopId === searchState.stopId ? 'true' : 'false');
+      const en = s.name_en
+        ? `<span class="stop-en">${escapeHtml(s.name_en)}</span>`
+        : '';
+      btn.innerHTML = `<span class="seq">${escapeHtml(String(s.seq))}</span><span>${escapeHtml(
+        s.name_tc || s.stopId
+      )}${en}</span>`;
+      btn.addEventListener('click', () => {
+        selectStop(s);
+      });
+      box.appendChild(btn);
+    });
+    box.hidden = false;
+    const active = box.querySelector('.search-stop[aria-pressed="true"]');
+    if (active && typeof active.scrollIntoView === 'function') {
+      active.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  function renderPinRow() {
+    if (!el.searchEta || !searchState.stopId) return;
+    let row = el.searchEta.querySelector('.search-pin-row');
+    if (row) row.remove();
+    row = document.createElement('div');
+    row.className = 'search-pin-row';
+    const pinned = isCurrentPinned();
+    const note = document.createElement('div');
+    note.textContent = pinned
+      ? '已記住此站，刷新後仍會顯示（唔會改固定欄）'
+      : '可記住此站，刷新後還原查詢（唔會改 config.js）';
+    const actions = document.createElement('div');
+    actions.className = 'pin-actions';
+    const pinBtn = document.createElement('button');
+    pinBtn.type = 'button';
+    pinBtn.textContent = pinned ? '已針選' : '針選此站';
+    pinBtn.className = pinned ? 'is-pinned' : '';
+    pinBtn.addEventListener('click', () => {
+      saveSearchSelection();
+      renderPinRow();
+    });
+    actions.appendChild(pinBtn);
+    if (pinned || loadSavedSearch()) {
+      const clearBtn = document.createElement('button');
+      clearBtn.type = 'button';
+      clearBtn.textContent = '清除記住';
+      clearBtn.addEventListener('click', () => {
+        clearSavedSearch();
+        renderPinRow();
+      });
+      actions.appendChild(clearBtn);
+    }
+    row.appendChild(note);
+    row.appendChild(actions);
+    el.searchEta.appendChild(row);
+  }
+
+  async function refreshSearchEta(opts) {
+    const quiet = !!(opts && opts.quiet);
+    if (!el.searchEta || !searchState.stopId || !searchState.route || !searchState.company) {
+      return;
+    }
+    const snap = {
+      route: searchState.route,
+      company: searchState.company,
+      stopId: searchState.stopId,
+      bound: searchState.bound,
+      serviceType: searchState.serviceType,
+    };
+    const cfg = {
+      company: snap.company,
+      type: snap.company,
+      route: snap.route,
+      stopId: snap.stopId,
+      stopNameTc: searchState.stopNameTc,
+      serviceType: snap.serviceType || 1,
+      bound: snap.bound,
+      label: `${companyLabel(snap.company)} · 搜尋`,
+    };
+    if (!quiet) {
+      el.searchEta.innerHTML = `<section class="card bus-card"><div class="skeleton" style="height:28px;width:40%"></div>
+        <div class="skeleton" style="height:20px;width:70%"></div>
+        <div class="skeleton" style="height:48px;margin-top:10px"></div></section>`;
+    }
+    try {
+      const data = await loadBusEta(cfg);
+      if (
+        searchState.stopId !== snap.stopId ||
+        searchState.route !== snap.route ||
+        searchState.company !== snap.company ||
+        searchState.bound !== snap.bound
+      ) {
+        return;
+      }
+      el.searchEta.innerHTML = '';
+      el.searchEta.appendChild(renderBusCard(data));
+      renderPinRow();
+    } catch (err) {
+      if (searchState.stopId !== snap.stopId) return;
+      el.searchEta.innerHTML = '';
+      el.searchEta.appendChild(renderBusCard(cfg, err));
+      renderPinRow();
+    }
+  }
+
+  async function selectStop(stop) {
+    searchState.stopId = stop.stopId;
+    searchState.stopNameTc = stop.name_tc || '';
+    renderStopList();
+    saveSearchSelection();
+    await refreshSearchEta({ quiet: false });
+  }
+
+  async function selectDirection(variant, preferStopId) {
+    searchState.bound = variant.bound;
+    searchState.serviceType = String(variant.serviceType || '1');
+    searchState.stops = [];
+    searchState.stopId = '';
+    searchState.stopNameTc = '';
+    renderDirectionChips();
+    if (el.searchEta) el.searchEta.innerHTML = '';
+    if (el.searchStops) {
+      el.searchStops.hidden = false;
+      el.searchStops.innerHTML = `<div class="empty-eta" style="padding:12px">載入站序…</div>`;
+    }
+    setSearchStatus('載入站序…');
+    try {
+      const ids = await fetchRouteStopIds(
+        searchState.company,
+        searchState.route,
+        searchState.bound,
+        searchState.serviceType
+      );
+      if (
+        searchState.bound !== variant.bound ||
+        String(searchState.serviceType) !== String(variant.serviceType || '1')
+      ) {
+        return;
+      }
+      if (!ids.length) {
+        searchState.stops = [];
+        if (el.searchStops) {
+          el.searchStops.hidden = false;
+          el.searchStops.innerHTML = `<div class="empty-eta" style="padding:12px">呢個方向暫時未有站序資料</div>`;
+        }
+        setSearchStatus('');
+        return;
+      }
+      const stops = await hydrateStopNames(searchState.company, ids);
+      if (searchState.bound !== variant.bound) return;
+      searchState.stops = stops;
+      renderStopList();
+      setSearchStatus('');
+      if (preferStopId) {
+        const hit = stops.find((s) => s.stopId === preferStopId);
+        if (hit) await selectStop(hit);
+      }
+    } catch (err) {
+      if (el.searchStops) {
+        el.searchStops.hidden = false;
+        el.searchStops.innerHTML = `<div class="error-box">站序載入失敗：${escapeHtml(
+          String(err.message || err)
+        )}</div>`;
+      }
+      setSearchStatus('站序載入失敗', true);
+    }
+  }
+
+  function selectCompany(company, prefer) {
+    searchState.company = company;
+    clearSearchPanels('dirs');
+    renderCompanyTabs();
+    const variants = searchState.variants[company] || [];
+    if (!variants.length) {
+      setSearchStatus(`搵唔到${companyLabel(company)}「${searchState.route}」嘅方向資料`, true);
+      return;
+    }
+    renderDirectionChips();
+    const prefBound = prefer && prefer.bound;
+    const prefSt = prefer && String(prefer.serviceType || '1');
+    const match =
+      (prefBound &&
+        variants.find(
+          (v) => v.bound === prefBound && String(v.serviceType || '1') === prefSt
+        )) ||
+      variants[0];
+    return selectDirection(match, prefer && prefer.stopId);
+  }
+
+  async function runBusSearch(opts) {
+    const prefer = opts || {};
+    const route = normalizeRoute(
+      prefer.route != null ? prefer.route : (el.searchInput && el.searchInput.value) || ''
+    );
+    if (el.searchInput) el.searchInput.value = route;
+    if (!route) {
+      setSearchStatus('請輸入路線號碼，例如 258D、1A、969。', true);
+      return;
+    }
+    if (!/^[A-Z0-9]{1,8}$/.test(route)) {
+      setSearchStatus('路線號碼格式無效。請輸入字母或數字，例如 258D、1A、969。', true);
+      return;
+    }
+
+    searchState.route = route;
+    searchState.company = '';
+    searchState.companies = [];
+    searchState.variants = { kmb: [], ctb: [] };
+    clearSearchPanels('all');
+    setSearchStatus('搜索中…');
+    if (el.searchBtn) el.searchBtn.disabled = true;
+
+    const kmbP = lookupKmbVariants(route).then(
+      (rows) => ({ ok: true, rows }),
+      (err) => ({ ok: false, err })
+    );
+    const ctbP = lookupCtbRoute(route).then(
+      async (meta) => {
+        if (!meta) return { ok: true, rows: [] };
+        const rows = await lookupCtbDirections(route, meta);
+        return { ok: true, rows };
+      },
+      (err) => ({ ok: false, err })
+    );
+
+    let kmbRes;
+    let ctbRes;
+    try {
+      [kmbRes, ctbRes] = await Promise.all([kmbP, ctbP]);
+    } finally {
+      if (el.searchBtn) el.searchBtn.disabled = false;
+    }
+
+    if (searchState.route !== route) return;
+
+    const errors = [];
+    if (kmbRes.ok && kmbRes.rows.length) {
+      searchState.variants.kmb = kmbRes.rows;
+      searchState.companies.push('kmb');
+    } else if (!kmbRes.ok) {
+      errors.push(`九巴／龍運：${kmbRes.err && kmbRes.err.message ? kmbRes.err.message : '載入失敗'}`);
+    }
+    if (ctbRes.ok && ctbRes.rows.length) {
+      searchState.variants.ctb = ctbRes.rows;
+      searchState.companies.push('ctb');
+    } else if (!ctbRes.ok) {
+      errors.push(`城巴：${ctbRes.err && ctbRes.err.message ? ctbRes.err.message : '載入失敗'}`);
+    }
+
+    if (!searchState.companies.length) {
+      if (errors.length && !kmbRes.ok && !ctbRes.ok) {
+        setSearchStatus(`載入失敗。${errors.join('；')}`, true);
+      } else if (errors.length) {
+        setSearchStatus(`搵唔到路線 ${route}（${errors.join('；')}）。`, true);
+      } else {
+        setSearchStatus(`搵唔到路線 ${route}。請確認路線號碼（例如 258D、1A、969）。`, true);
+      }
+      return;
+    }
+
+    if (errors.length) {
+      setSearchStatus(`已找到部分資料。${errors.join('；')}`);
+    } else {
+      setSearchStatus('');
+    }
+
+    renderCompanyTabs();
+    const preferredCo =
+      prefer.company && searchState.companies.includes(prefer.company)
+        ? prefer.company
+        : searchState.companies[0];
+    await selectCompany(preferredCo, prefer);
+  }
+
+  function initBusSearch() {
+    if (!el.searchForm) return;
+    el.searchForm.addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      runBusSearch();
+    });
+    const saved = loadSavedSearch();
+    if (saved && saved.route) {
+      if (el.searchInput) el.searchInput.value = saved.route;
+      runBusSearch(saved).catch((err) => {
+        console.warn('還原已記住嘅巴士搜尋失敗', err);
+        setSearchStatus('還原上次查詢失敗，請重新搜索。', true);
+      });
+    }
+  }
+
+
   async function refresh() {
     const transitItems = resolveTransitList();
     const trafficSegs = CFG.traffic || [];
@@ -888,10 +1537,15 @@
       }
     });
 
+    const searchEtaPromise = refreshSearchEta({ quiet: true }).catch((err) => {
+      console.warn('搜尋 ETA 刷新失敗', err);
+    });
+
     const [etaCards, trafficCards] = await Promise.all([
       Promise.all(etaPromises),
       Promise.all(trafficPromises),
       wxPromise,
+      searchEtaPromise,
     ]);
 
     if (transitItems.length && el.etaList) {
@@ -930,5 +1584,6 @@
   if (!window.HK_DASH_CONFIG && el.etaList) {
     el.etaList.innerHTML = `<div class="card error-box">缺少 config.js</div>`;
   }
+  initBusSearch();
   loop();
 })();
