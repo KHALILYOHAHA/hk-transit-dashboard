@@ -111,7 +111,8 @@ window.HK_DASH_CONFIG = {
    *   https://www.td.gov.hk/tc/special_news/trafficnews.xml
    * data.gov.hk 資料集 hk-td-tis_19-special-traffic-news-v2，實時更新；
    * 官方 CDN 快取約 5 分鐘（s-maxage=300）。頁面隨 60 秒刷新拉一次。
-   * 有 corridor 關鍵字嘅消息排前並標「沿線」，其後顯示其他全港消息。
+   * 只顯示道路事故（交通意外／Traffic Accident）。走廊關鍵字匹配者排前並標「沿線」。
+   * 工程、交通安排、其他特別消息一律唔顯示；無事故則顯示「暫時未有道路事故」。
    */
   trafficNewsUrl: 'https://www.td.gov.hk/tc/special_news/trafficnews.xml',
   trafficNewsLimit: 8,

@@ -242,16 +242,20 @@ header .sub {
 }
 
 /* Traffic: 1 column on phone, 2×2 on tablet/desktop.
-   Use gap (not only card margin) so rows and columns stay clearly separated. */
+   Gap must stay larger than the card box-shadow (20px blur used to swallow a 16–18px gutter). */
 .traffic-grid {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 16px;
-  margin: 4px 0 0;
+  gap: 24px;
+  row-gap: 24px;
+  column-gap: 24px;
+  margin: 6px 0 0;
+  align-items: stretch;
 }
 
 .traffic-grid .card {
-  margin-bottom: 0;
+  margin: 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
 }
 
 /* ETA: 3 columns — bus | placeholder | mtr */
@@ -264,16 +268,15 @@ header .sub {
 @media (min-width: 640px) {
   .traffic-grid {
     grid-template-columns: 1fr 1fr;
-    gap: 18px;
+    gap: 28px;
+    row-gap: 28px;
+    column-gap: 28px;
   }
   .eta-grid {
     grid-template-columns: 1fr 1fr 1fr;
   }
-  .traffic-grid .card,
   .eta-grid .card {
     height: 100%;
-  }
-  .eta-grid .card {
     margin-bottom: 12px;
   }
 }
@@ -308,6 +311,7 @@ header .sub {
 .bus-card .top,
 .mtr-card .top,
 .traffic-card .top,
+.traffic-news-card .top,
 .placeholder-card .top {
   display: flex;
   align-items: center;
@@ -512,6 +516,7 @@ footer.hint code {
   padding: 8px 10px;
   border-radius: 10px;
   min-width: 52px;
+  flex: 0 0 auto;
   text-align: center;
   letter-spacing: 0.04em;
   line-height: 1.25;
@@ -569,7 +574,11 @@ footer.hint code {
 }
 
 .traffic-news-card {
-  margin-top: 16px;
+  margin-top: 24px;
+}
+
+.traffic-news-card .traffic-badge {
+  align-self: flex-start;
 }
 
 .traffic-news-group {

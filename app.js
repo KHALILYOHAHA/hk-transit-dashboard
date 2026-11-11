@@ -1136,6 +1136,27 @@
     });
   }
 
+  /** 只保留道路事故／交通意外，唔顯示工程、交通安排或其他特別消息。 */
+  function isRoadAccident(item) {
+    const blob = [
+      item.heading,
+      item.detail,
+      item.detailEn,
+      item.content,
+      item.headingEn,
+      item.contentEn,
+    ]
+      .filter(Boolean)
+      .join(' ');
+    if (/交通意外|車禍|交通失事|Traffic Accident|Vehicle Accident/i.test(blob)) return true;
+    const nonAccident = /道路工程|路面工程|交通安排|臨時交通|改道|車輛故障|掉落|火警|水浸|Road ?Works|Fallen Object|Vehicle Breakdown|Traffic Arrangement/i;
+    if (nonAccident.test(blob)) return false;
+    const headingAccident =
+      item.heading === '道路事故' || /^Road Incident$/i.test(item.headingEn || '');
+    const detail = `${item.detail || ''} ${item.detailEn || ''}`.trim();
+    return headingAccident && (!detail || /交通意外|Traffic Accident/i.test(detail));
+  }
+
   function parseTrafficNewsXml(xmlText) {
     const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
     if (doc.querySelector('parsererror')) {
@@ -1151,6 +1172,7 @@
         heading: newsField(node, 'INCIDENT_HEADING_CN') || newsField(node, 'INCIDENT_HEADING_EN'),
         headingEn: newsField(node, 'INCIDENT_HEADING_EN'),
         detail: newsField(node, 'INCIDENT_DETAIL_CN') || newsField(node, 'INCIDENT_DETAIL_EN'),
+        detailEn: newsField(node, 'INCIDENT_DETAIL_EN'),
         location: newsField(node, 'LOCATION_CN') || newsField(node, 'LOCATION_EN'),
         locationEn: newsField(node, 'LOCATION_EN'),
         district: newsField(node, 'DISTRICT_CN') || newsField(node, 'DISTRICT_EN'),
@@ -1176,13 +1198,16 @@
       item.relevant = isRelevantTrafficNews(item, keywords);
       item.closed = /closed|完結|結束/i.test(`${statusEn} ${statusCn}`);
       item.isNew = /^(new|新)$/i.test(statusEn) || statusCn === '新';
+      item.accident = isRoadAccident(item);
       return item;
     });
-    items.sort((a, b) => {
+    const accidents = items.filter((item) => item.accident);
+    accidents.sort((a, b) => {
       if (a.relevant !== b.relevant) return a.relevant ? -1 : 1;
+      if (a.closed !== b.closed) return a.closed ? 1 : -1;
       return (b.announcedMs || 0) - (a.announcedMs || 0);
     });
-    return items;
+    return accidents;
   }
 
   let trafficNewsCache = null;
@@ -1248,37 +1273,16 @@
       el.trafficNewsBody.innerHTML = `<div class="empty-eta">交通消息暫時未能載入</div>`;
       return;
     }
-    const list = Array.isArray(items) ? items : [];
+    const list = (Array.isArray(items) ? items : []).filter(isRoadAccident);
     if (!list.length) {
-      el.trafficNewsBody.innerHTML = `<div class="empty-eta">暫時未有特別交通消息</div>`;
+      el.trafficNewsBody.innerHTML = `<div class="empty-eta">暫時未有道路事故</div>`;
       return;
     }
     const limit = Math.max(1, Number(CFG.trafficNewsLimit) || 8);
-    const relevant = list.filter((x) => x.relevant);
-    const others = list.filter((x) => !x.relevant);
-    const shownRelevant = relevant.slice(0, limit);
-    const remaining = Math.max(0, limit - shownRelevant.length);
-    const shownOthers = others.slice(0, remaining);
-
-    const groups = [];
-    if (shownRelevant.length) {
-      const label =
-        shownOthers.length || relevant.length
-          ? `<div class="traffic-news-group-label">沿線走廊</div>`
-          : '';
-      groups.push(
-        `<div class="traffic-news-group">${label}${shownRelevant.map(renderTrafficNewsItem).join('')}</div>`
-      );
-    }
-    if (shownOthers.length) {
-      const label = shownRelevant.length
-        ? `<div class="traffic-news-group-label">其他消息</div>`
-        : '';
-      groups.push(
-        `<div class="traffic-news-group">${label}${shownOthers.map(renderTrafficNewsItem).join('')}</div>`
-      );
-    }
-    el.trafficNewsBody.innerHTML = groups.join('');
+    const shown = list.slice(0, limit);
+    el.trafficNewsBody.innerHTML = `<div class="traffic-news-group">${shown
+      .map(renderTrafficNewsItem)
+      .join('')}</div>`;
   }
 
   function escapeHtml(s) {
