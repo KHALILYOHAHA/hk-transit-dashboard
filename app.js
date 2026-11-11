@@ -119,6 +119,7 @@
     wxTemp: document.getElementById('wx-temp'),
     wxCond: document.getElementById('wx-cond'),
     wxDetails: document.getElementById('wx-details'),
+    wxTips: document.getElementById('wx-tips'),
     etaList: document.getElementById('eta-list'),
     trafficList: document.getElementById('traffic-list'),
     lastUpdated: document.getElementById('last-updated'),
@@ -241,10 +242,20 @@
     const mapped = HKO_ICON_MAP[iconCode] || { emoji: '🌡️', label: '天氣' };
     const forecast = flw?.forecastDesc || flw?.generalSituation || '';
     const uv = rhr.uvindex?.data?.[0];
+    const rainRows = Array.isArray(rhr.rainfall?.data) ? rhr.rainfall.data : [];
+    const rainfallMax = rainRows.reduce((m, row) => {
+      const v = Number(row?.max);
+      return Number.isFinite(v) ? Math.max(m, v) : m;
+    }, 0);
     return {
       temp: hko?.value,
       unit: hko?.unit || 'C',
       humidity,
+      iconCode,
+      uvValue: uv != null ? uv.value : null,
+      uvDesc: uv?.desc || '',
+      rainfallMax,
+      wxLabel: mapped.label,
       emoji: mapped.emoji,
       condition: forecast ? forecast.split(/[。．]/)[0] : mapped.label,
       details: [
@@ -264,6 +275,11 @@
       temp: Math.round(c.temperature_2m),
       unit: 'C',
       humidity: c.relative_humidity_2m,
+      iconCode: c.weather_code,
+      uvValue: null,
+      uvDesc: '',
+      rainfallMax: null,
+      wxLabel: mapped.label,
       emoji: mapped.emoji,
       condition: mapped.label,
       details: [
@@ -275,12 +291,82 @@
     };
   }
 
+  /**
+   * 根據已載入嘅天文台／Open-Meteo 數據產生 1–3 條短提示（唔另拉 API）。
+   *  - 雨／驟雨／雷暴／有錄得雨量，或 HKO 圖示 53/54/62–65、WMO 雨碼 → 拎遮
+   *  - 明顯落雨（圖示 63–65、字眼含大雨／雷暴、或雨量 ≥1 mm）→ 小心路滑
+   *  - 氣溫 ≤18°C，或寒冷圖示／字眼 → 著多件衫
+   *  - 氣溫 ≥30°C、酷熱／炎熱、或乾燥偏熱（濕度 ≤40% 且 ≥28°C）→ 飲多啲水
+   *  - 紫外線指數 ≥6 或描述為高／甚高／極高 → 塗防曬；同時 ≥28°C 亦會 飲多啲水
+   *  - 以上皆非 → 天氣清爽，適合輕裝
+   */
+  function weatherTipsFrom(wx) {
+    const tips = [];
+    const temp = Number(wx.temp);
+    const hasTemp = Number.isFinite(temp);
+    const humidity = Number(wx.humidity);
+    const uvVal = wx.uvValue != null && wx.uvValue !== '' ? Number(wx.uvValue) : NaN;
+    const uvDesc = String(wx.uvDesc || '').trim();
+    const icon = wx.iconCode != null && wx.iconCode !== '' ? Number(wx.iconCode) : NaN;
+    const label = String(wx.wxLabel || '');
+    const cond = String(wx.condition || '');
+    const blob = `${cond} ${label}`;
+    const rainfall = wx.rainfallMax != null ? Number(wx.rainfallMax) : NaN;
+
+    const hkoRainIcons = new Set([53, 54, 62, 63, 64, 65]);
+    const wmoRainCodes = new Set([51, 53, 55, 61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99]);
+    const rainByIcon =
+      Number.isFinite(icon) &&
+      (wx.source === 'Open-Meteo' ? wmoRainCodes.has(icon) : hkoRainIcons.has(icon));
+    const rainByText = /驟雨|雷暴|雷雨|大雨|微雨|毛毛雨|雨/.test(blob);
+    const raining = rainByIcon || rainByText || (Number.isFinite(rainfall) && rainfall > 0);
+    const clearlyRaining =
+      (Number.isFinite(icon) && (wx.source === 'Open-Meteo' ? [63, 65, 82, 95, 96, 99].includes(icon) : [63, 64, 65].includes(icon))) ||
+      /大雨|雷暴|雷雨/.test(blob) ||
+      (Number.isFinite(rainfall) && rainfall >= 1);
+
+    const cold =
+      (hasTemp && temp <= 18) ||
+      (Number.isFinite(icon) && wx.source !== 'Open-Meteo' && [90, 91, 92, 93].includes(icon)) ||
+      /寒冷|嚴寒|霜/.test(blob);
+    const hot =
+      (hasTemp && temp >= 30) ||
+      (Number.isFinite(icon) && wx.source !== 'Open-Meteo' && [77, 85].includes(icon)) ||
+      /酷熱|炎熱/.test(blob);
+    const dryHeat = hasTemp && temp >= 28 && Number.isFinite(humidity) && humidity <= 40;
+    const highUv =
+      (Number.isFinite(uvVal) && uvVal >= 6) || /^(高|甚高|極高)/.test(uvDesc);
+    const drinkWater = hot || dryHeat || (highUv && hasTemp && temp >= 28);
+
+    if (raining) tips.push('拎遮');
+    if (clearlyRaining) tips.push('小心路滑');
+    if (cold) tips.push('著多件衫');
+    if (drinkWater) tips.push('飲多啲水');
+    if (highUv && !clearlyRaining) tips.push('塗防曬');
+    if (!tips.length) tips.push('天氣清爽，適合輕裝');
+    return tips.slice(0, 3);
+  }
+
+  function renderWeatherTips(tips) {
+    if (!el.wxTips) return;
+    if (!tips || !tips.length) {
+      el.wxTips.hidden = true;
+      el.wxTips.innerHTML = '';
+      return;
+    }
+    el.wxTips.hidden = false;
+    el.wxTips.innerHTML = tips
+      .map((tip) => `<span class="weather-tip">${escapeHtml(tip)}</span>`)
+      .join('');
+  }
+
   function renderWeather(wx, err) {
     if (err) {
       el.wxIcon.textContent = '⚠️';
       el.wxTemp.innerHTML = '—';
       el.wxCond.textContent = '天氣載入失敗';
       el.wxDetails.innerHTML = `<span class="error-box" style="display:inline-block">${escapeHtml(String(err.message || err))}</span>`;
+      renderWeatherTips([]);
       return;
     }
     el.wxIcon.textContent = wx.emoji || '🌡️';
@@ -289,6 +375,7 @@
     el.wxDetails.innerHTML = (wx.details || [])
       .map((d) => `<span>${escapeHtml(d)}</span>`)
       .join('');
+    renderWeatherTips(weatherTipsFrom(wx));
   }
 
   async function loadKmbEta(stopCfg) {

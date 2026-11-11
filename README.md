@@ -1,6 +1,6 @@
 # 香港交通 · 天氣看板 / HK Transit + Weather Dashboard
 
-個人用靜態網頁：顯示**香港天氣**＋**九巴實時到站 ETA**＋**港鐵 Next Train**＋**屯門公路交通車速**。手機優先、深色主題、約每 45 秒自動刷新。
+個人用靜態網頁：顯示**香港天氣**（連短提示）＋**九巴實時到站 ETA**＋**港鐵 Next Train**＋**屯門市中心 ↔ 圓方、圓方 ↔ 黃大仙**四段道路車速。手機優先、深色主題、約每 45 秒自動刷新。
 
 ## 點開 / How to open
 
@@ -69,14 +69,16 @@ python3 server.py
    `https://data.etabus.gov.hk/v1/transport/kmb/eta/{stopId}/{route}/{serviceType}`
 
 
-### 道路交通 `traffic`（屯門公路）
+天氣卡會按同一組天文台（或備援 Open-Meteo）數據，在濕度／紫外線下方顯示 1–3 條短提示，例如落雨「拎遮」「小心路滑」、天冷「著多件衫」、炎熱或高紫外線「飲多啲水」「塗防曬」；無特別情況則「天氣清爽，適合輕裝」。
+
+### 道路交通 `traffic`（四段走廊）
 
 ```js
 {
-  label: '屯門公路',
-  roadNameTc: '東行 · 往荃灣／九龍',
-  note: '深井／汀九／轉乘站／麗城一帶偵測器平均',
-  detectorIds: ['TDS91011', 'TDS91010', 'TDS91008', 'TDS91020', 'AID05201'],
+  label: '屯門市中心 → 圓方',
+  roadNameTc: '東行 · 往圓方／九龍',
+  note: '市中心皇珠路／置樂、轉乘站、深井、荃灣路至西九龍公路一帶偵測器平均',
+  detectorIds: ['TDSLFR10003', 'TDS91032', 'TDS91020', 'TDS91011', 'AID05203', 'AID03211'],
 }
 ```
 
@@ -89,12 +91,16 @@ python3 server.py
 | 規格 PDF | `https://static.data.gov.hk/td/traffic-data-strategic-major-roads/dataspec/dataspec-traffic-data-strategic-major-roads.pdf` |
 | data.gov.hk 資料集 | Traffic Data of Strategic / Major Roads（`hk-td-sm_4`） |
 
-預設兩個路段：
+預設四個路段（頁面 2×2 排列；電話直向單欄）：
 
 | 標籤 | 方向 | detectorIds |
 |------|------|-------------|
-| 屯門公路 | 東行 · 往荃灣／九龍 | `TDS91011` `TDS91010` `TDS91008` `TDS91020` `AID05201` |
-| 屯門公路 | 西行 · 往屯門 | `TDS90027` `TDS90026` `TDS90036` `TDS90037` `TDS90016` |
+| 屯門市中心 → 圓方 | 東行 · 往圓方／九龍 | `TDSLFR10003` `TDS91032` `TDS91020` `TDS91011` `AID05203` `AID03211` |
+| 圓方 → 黃大仙 | 北行／東行 · 往黃大仙 | `AID03106` `AID03111` `AID07201` `AID07205` `AID07210` `AID07214` |
+| 黃大仙 → 圓方 | 西行／南行 · 往圓方 | `AID07119` `AID07126` `AID07133` `AID03204` `AID03208` `AID03211` |
+| 圓方 → 屯門市中心 | 西行 · 往屯門市中心 | `AID03106` `AID03111` `AID05133` `TDS90027` `TDS90036` `TDSLFR20002` |
+
+走廊：屯門市中心沿皇珠路入屯門公路，經荃灣路／青葵公路至西九龍公路近圓方；圓方往黃大仙沿西九龍公路北行，再經呈祥道、龍翔道（七號幹道）。官方位置圖無「連翔道」同青葵公路北行偵測器；`TDS90026`、`AID03114`、`AID03203` 間中缺數，改用同向鄰近站。
 
 頁面會對每個 `detectorId` 取 **valid=Y** 且合理範圍（1–130 km/h）嘅車道平均，再對該路段所有命中偵測器再平均；**唔會虛構車速**。  
 車況標籤（暢通／緩慢／擠塞）只係 UI 顏色，閾值：≥60／≥40／&lt;40 km/h。
@@ -102,7 +108,7 @@ python3 server.py
 核對：
 
 ```bash
-curl -sL "https://resource.data.one.gov.hk/td/traffic-detectors/rawSpeedVol-all.xml" | rg "TDS91011|TDS90027"
+curl -sL "https://resource.data.one.gov.hk/td/traffic-detectors/rawSpeedVol-all.xml" | rg "TDSLFR10003|AID03211|AID07214|TDS90027"
 ```
 
 > 備註：Journey Time Indicator（JTI v2，`SJ5` 屯門公路近井財街）XML 喺 `static.data.gov.hk`；本機／部分網絡可能 403。本看板改用已驗證可 curl 嘅偵測器 Raw 車速。
@@ -158,8 +164,10 @@ curl "https://rt.data.gov.hk/v1/transport/mtr/getSchedule.php?line=TWL&sta=ADM&l
 | 示範·九巴104 | 巴士 | 104 / `010D8E1BE34538EE` | O → 深水埗 · 堅尼地城巴士總站 |
 | 示範·港鐵中環 | 港鐵 | ISL / CEN | 港島線 · 中環 |
 | 示範·港鐵金鐘 | 港鐵 | TWL / ADM | 荃灣線 · 金鐘 |
-| 屯門公路 | 道路 | 東行 detectorIds | 往荃灣／九龍 · Raw 車速平均 |
-| 屯門公路 | 道路 | 西行 detectorIds | 往屯門 · Raw 車速平均 |
+| 屯門市中心 → 圓方 | 道路 | 東行 detectorIds | 皇珠路／屯門公路／荃灣路／西九龍公路 |
+| 圓方 → 黃大仙 | 道路 | 北行／東行 detectorIds | 西九龍公路／呈祥道／龍翔道 |
+| 黃大仙 → 圓方 | 道路 | 西行／南行 detectorIds | 龍翔道／呈祥道／西九龍公路 |
+| 圓方 → 屯門市中心 | 道路 | 西行 detectorIds | 西九龍公路／荃灣路／屯門公路／皇珠路 |
 
 ## 檔案
 
