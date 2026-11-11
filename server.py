@@ -27,6 +27,7 @@ ALLOWED_HOSTS = {
     "rt.data.gov.hk",
     "resource.data.one.gov.hk",
     "static.data.gov.hk",
+    "www.td.gov.hk",
 }
 
 

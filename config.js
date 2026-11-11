@@ -106,7 +106,27 @@ window.HK_DASH_CONFIG = {
    * 已知間中缺數、因此冇選：TDS90026（深井西行 2）、TDS91030（青山灣東行）、
    *   AID03114（西九龍公路近青沙公路北行）、AID03203（西九龍公路近海麗邨南行）。
    * 官方圖亦無青葵公路北行偵測器，回程靠西九龍公路北行接荃灣路。
+   *
+   * 交通消息：運輸署「特別交通消息（第二代）」Traditional Chinese XML
+   *   https://www.td.gov.hk/tc/special_news/trafficnews.xml
+   * data.gov.hk 資料集 hk-td-tis_19-special-traffic-news-v2，實時更新；
+   * 官方 CDN 快取約 5 分鐘（s-maxage=300）。頁面隨 60 秒刷新拉一次。
+   * 有 corridor 關鍵字嘅消息排前並標「沿線」，其後顯示其他全港消息。
    */
+  trafficNewsUrl: 'https://www.td.gov.hk/tc/special_news/trafficnews.xml',
+  trafficNewsLimit: 8,
+  trafficNewsKeywords: [
+    '屯門市中心', '屯門公路', '屯門', '皇珠路', '置樂',
+    '荃灣路', '荃灣西', '青葵公路', '青葵',
+    '西九龍公路', '西九龍', '圓方', '九龍站', '奧運站', '奧海城',
+    '呈祥道', '龍翔道', '黃大仙', '畢架山', '荔枝角', '南昌', '美孚',
+    '深井', '汀九', '大欖',
+    'Tuen Mun Road', 'Tuen Mun', 'Wong Chu Road',
+    'Tsuen Wan Road', 'Tsing Kwai',
+    'West Kowloon Highway', 'West Kowloon', 'Elements', 'Kowloon Station',
+    'Ching Cheung Road', 'Lung Cheung Road', 'Wong Tai Sin',
+    'Lai Chi Kok', 'Nam Cheong', 'Mei Foo', 'Sham Tseng', 'Ting Kau',
+  ],
   traffic: [
     {
       label: '屯門市中心 → 圓方',

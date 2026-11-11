@@ -34,6 +34,20 @@
 
   <div class="section-title">道路交通</div>
   <div id="traffic-list" class="traffic-grid" aria-live="polite"></div>
+  <section class="card traffic-news-card" id="traffic-news" aria-label="交通消息">
+    <div class="top">
+      <div class="traffic-badge">消息<br/><span style="font-weight:600;opacity:.9;font-size:0.65rem">TD</span></div>
+      <div class="route-meta">
+        <div class="label">道路交通</div>
+        <div class="dest">交通消息</div>
+        <div class="stop-name">運輸署特別交通消息</div>
+      </div>
+    </div>
+    <div id="traffic-news-body">
+      <div class="skeleton" style="height:18px;width:55%"></div>
+      <div class="skeleton" style="height:36px;width:90%"></div>
+    </div>
+  </section>
 
   <div class="section-title" id="bus-search-heading">搵巴士路線</div>
   <section class="card search-card" id="bus-search" aria-labelledby="bus-search-heading">
@@ -58,7 +72,7 @@
     固定三欄同路段：編輯專案入面嘅 <code>config.js</code>，儲存後刷新頁面。<br />
     Weather: 香港天文台開放數據 · Bus: 九巴 data.etabus.gov.hk · 城巴 rt.data.gov.hk<br />
     MTR: 港鐵 Next Train（rt.data.gov.hk，免 API key）<br />
-    Traffic: 運輸署主要幹道交通偵測器（resource.data.one.gov.hk）<br />
+    Traffic: 運輸署主要幹道交通偵測器（resource.data.one.gov.hk）· 特別交通消息（www.td.gov.hk）<br />
     數據僅供參考，請以現場／官方 App 為準。
   </footer>
 

@@ -103,7 +103,11 @@ python3 server.py
 走廊：屯門市中心沿皇珠路入屯門公路，經荃灣路／青葵公路至西九龍公路近圓方；圓方往黃大仙沿西九龍公路北行，再經呈祥道、龍翔道（七號幹道）。官方位置圖無「連翔道」同青葵公路北行偵測器；`TDS90026`、`AID03114`、`AID03203` 間中缺數，改用同向鄰近站。
 
 頁面會對每個 `detectorId` 取 **valid=Y** 且合理範圍（1–130 km/h）嘅車道平均，再對該路段所有命中偵測器再平均；**唔會虛構車速**。  
-車況標籤（暢通／緩慢／擠塞）只係 UI 顏色，閾值：≥60／≥40／&lt;40 km/h。
+車況標籤（暢通／緩慢／擠塞）只係 UI 顏色，閾值：≥60／≥40／&lt;40 km/h。四格車速卡之間用 16px（電話直向）／18px（2×2）空隙分開，唔會貼埋一齊。
+
+四格下面係「**交通消息**」，來源係運輸署官方「特別交通消息（第二代）」繁中 XML：  
+`https://www.td.gov.hk/tc/special_news/trafficnews.xml`（data.gov.hk 資料集 `hk-td-tis_19-special-traffic-news-v2`，實時；CDN 約 5 分鐘快取，頁面隨 60 秒刷新）。  
+與四段走廊相關嘅消息（屯門市中心／屯門公路、荃灣路、西九龍公路、呈祥道、龍翔道、圓方、黃大仙等關鍵字）會排前並標「沿線」，其後顯示其他全港消息；無消息時顯示「暫時未有特別交通消息」，**唔會虛構事故**。
 
 核對：
 
@@ -154,6 +158,7 @@ curl "https://rt.data.gov.hk/v1/transport/mtr/getSchedule.php?line=TWL&sta=ADM&l
 | 巴士 ETA | 九巴／龍運 Open Data | `https://data.etabus.gov.hk/v1/transport/kmb/...` |
 | 港鐵班次 | MTR Next Train（data.gov.hk） | `https://rt.data.gov.hk/v1/transport/mtr/getSchedule.php?...` |
 | 道路車速 | 運輸署主要幹道交通偵測器 Raw | `https://resource.data.one.gov.hk/td/traffic-detectors/rawSpeedVol-all.xml` |
+| 交通消息 | 運輸署特別交通消息（第二代）繁中 XML | `https://www.td.gov.hk/tc/special_news/trafficnews.xml` |
 
 全部係官方／公開 API，無爬私人 App，**港鐵唔使 API key**。
 

@@ -20,6 +20,9 @@
   /** 運輸署主要幹道交通偵測器 Raw 車速（約每 1 分鐘） */
   const TRAFFIC_RAW =
     'https://resource.data.one.gov.hk/td/traffic-detectors/rawSpeedVol-all.xml';
+  /** 運輸署特別交通消息（第二代）繁中 XML；data.gov.hk hk-td-tis_19 */
+  const TRAFFIC_NEWS_DEFAULT =
+    'https://www.td.gov.hk/tc/special_news/trafficnews.xml';
   const HKO_RHR = 'https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread&lang=tc';
   const HKO_FLW = 'https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=flw&lang=tc';
   const HKO_FND = 'https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=fnd&lang=tc';
@@ -126,6 +129,8 @@
     wxForecast: document.getElementById('wx-forecast'),
     etaList: document.getElementById('eta-list'),
     trafficList: document.getElementById('traffic-list'),
+    trafficNews: document.getElementById('traffic-news'),
+    trafficNewsBody: document.getElementById('traffic-news-body'),
     lastUpdated: document.getElementById('last-updated'),
     countdown: document.getElementById('countdown'),
     searchForm: document.getElementById('bus-search-form'),
@@ -1072,6 +1077,210 @@
     });
   }
 
+  function trafficNewsKeywords() {
+    const fromCfg = CFG.trafficNewsKeywords;
+    if (Array.isArray(fromCfg) && fromCfg.length) {
+      return fromCfg.map((k) => String(k).trim()).filter(Boolean);
+    }
+    return [];
+  }
+
+  function newsField(node, name) {
+    if (!node) return '';
+    const eln = node.querySelector(name);
+    return (eln?.textContent || '').trim();
+  }
+
+  function formatNewsTime(raw) {
+    if (!raw) return '';
+    const s = String(raw).trim();
+    const hasTz = /[zZ]|[+-]\d{2}:?\d{2}$/.test(s);
+    const normalized =
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s) && !hasTz ? `${s}+08:00` : s;
+    const d = new Date(normalized);
+    if (Number.isNaN(d.getTime())) return s;
+    const parts = new Intl.DateTimeFormat('zh-HK', {
+      timeZone: 'Asia/Hong_Kong',
+      month: 'numeric',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(d);
+    const get = (typ) => parts.find((p) => p.type === typ)?.value || '';
+    return `${get('day')}/${get('month')} ${get('hour')}:${get('minute')}`;
+  }
+
+  function isRelevantTrafficNews(item, keywords) {
+    const blob = [
+      item.heading,
+      item.detail,
+      item.location,
+      item.district,
+      item.direction,
+      item.landmark,
+      item.between,
+      item.content,
+      item.headingEn,
+      item.locationEn,
+      item.districtEn,
+      item.directionEn,
+      item.contentEn,
+    ]
+      .filter(Boolean)
+      .join(' ');
+    const lower = blob.toLowerCase();
+    return keywords.some((k) => {
+      if (/[A-Za-z]/.test(k)) return lower.includes(k.toLowerCase());
+      return blob.includes(k);
+    });
+  }
+
+  function parseTrafficNewsXml(xmlText) {
+    const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
+    if (doc.querySelector('parsererror')) {
+      throw new Error('交通消息 XML 解析失敗');
+    }
+    const keywords = trafficNewsKeywords();
+    const items = [...doc.querySelectorAll('list > message')].map((node) => {
+      const announced = newsField(node, 'ANNOUNCEMENT_DATE');
+      const statusEn = newsField(node, 'INCIDENT_STATUS_EN');
+      const statusCn = newsField(node, 'INCIDENT_STATUS_CN') || statusEn;
+      const item = {
+        id: newsField(node, 'INCIDENT_NUMBER') || newsField(node, 'ID'),
+        heading: newsField(node, 'INCIDENT_HEADING_CN') || newsField(node, 'INCIDENT_HEADING_EN'),
+        headingEn: newsField(node, 'INCIDENT_HEADING_EN'),
+        detail: newsField(node, 'INCIDENT_DETAIL_CN') || newsField(node, 'INCIDENT_DETAIL_EN'),
+        location: newsField(node, 'LOCATION_CN') || newsField(node, 'LOCATION_EN'),
+        locationEn: newsField(node, 'LOCATION_EN'),
+        district: newsField(node, 'DISTRICT_CN') || newsField(node, 'DISTRICT_EN'),
+        districtEn: newsField(node, 'DISTRICT_EN'),
+        direction: newsField(node, 'DIRECTION_CN') || newsField(node, 'DIRECTION_EN'),
+        directionEn: newsField(node, 'DIRECTION_EN'),
+        landmark: newsField(node, 'NEAR_LANDMARK_CN') || newsField(node, 'NEAR_LANDMARK_EN'),
+        between: newsField(node, 'BETWEEN_LANDMARK_CN') || newsField(node, 'BETWEEN_LANDMARK_EN'),
+        content: newsField(node, 'CONTENT_CN') || newsField(node, 'CONTENT_EN'),
+        contentEn: newsField(node, 'CONTENT_EN'),
+        announced,
+        announcedMs: (() => {
+          const s = announced;
+          const hasTz = /[zZ]|[+-]\d{2}:?\d{2}$/.test(s);
+          const normalized =
+            /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s) && !hasTz ? `${s}+08:00` : s;
+          const t = new Date(normalized).getTime();
+          return Number.isFinite(t) ? t : 0;
+        })(),
+        statusEn,
+        statusCn,
+      };
+      item.relevant = isRelevantTrafficNews(item, keywords);
+      item.closed = /closed|完結|結束/i.test(`${statusEn} ${statusCn}`);
+      item.isNew = /^(new|新)$/i.test(statusEn) || statusCn === '新';
+      return item;
+    });
+    items.sort((a, b) => {
+      if (a.relevant !== b.relevant) return a.relevant ? -1 : 1;
+      return (b.announcedMs || 0) - (a.announcedMs || 0);
+    });
+    return items;
+  }
+
+  let trafficNewsCache = null;
+  let trafficNewsCacheAt = 0;
+
+  async function loadTrafficNews() {
+    const url = String(CFG.trafficNewsUrl || TRAFFIC_NEWS_DEFAULT).trim() || TRAFFIC_NEWS_DEFAULT;
+    const now = Date.now();
+    // 官方 CDN 約 5 分鐘一快取；同一輪／短時間內重用解析結果
+    if (trafficNewsCache && now - trafficNewsCacheAt < 20000) return trafficNewsCache;
+    const xml = await fetchText(url);
+    trafficNewsCache = parseTrafficNewsXml(xml);
+    trafficNewsCacheAt = now;
+    return trafficNewsCache;
+  }
+
+  function newsLocationLine(item) {
+    const bits = [];
+    if (item.location) bits.push(item.location);
+    if (item.district && item.district !== item.location) bits.push(item.district);
+    if (item.direction) bits.push(item.direction.startsWith('往') ? item.direction : `往${item.direction}`);
+    if (item.landmark) bits.push(`近${item.landmark}`);
+    if (item.between) bits.push(item.between);
+    return bits.join(' · ');
+  }
+
+  function renderTrafficNewsItem(item) {
+    const titleParts = [item.heading, item.detail].filter(Boolean);
+    const title = titleParts.join(' · ') || '交通消息';
+    const loc = newsLocationLine(item);
+    const statusKlass = item.closed ? 'is-closed' : item.isNew ? 'is-new' : '';
+    const itemKlass = [
+      'traffic-news-item',
+      item.relevant ? 'is-relevant' : '',
+      item.closed ? 'is-closed' : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    const tag = item.relevant ? '<span class="traffic-news-tag">沿線</span>' : '';
+    const status = item.statusCn
+      ? `<span class="traffic-news-status ${statusKlass}">${escapeHtml(item.statusCn)}</span>`
+      : '';
+    const locHtml = loc ? `<div class="traffic-news-loc">${escapeHtml(loc)}</div>` : '';
+    const textHtml = item.content
+      ? `<div class="traffic-news-text">${escapeHtml(item.content)}</div>`
+      : '';
+    const timeBits = [formatNewsTime(item.announced), '運輸署'].filter(Boolean);
+    return `<article class="${itemKlass}">
+      <div class="traffic-news-meta">
+        ${tag}
+        <span class="traffic-news-heading">${escapeHtml(title)}</span>
+        ${status}
+      </div>
+      ${locHtml}
+      ${textHtml}
+      <div class="traffic-news-time">${escapeHtml(timeBits.join(' · '))}</div>
+    </article>`;
+  }
+
+  function renderTrafficNews(items, err) {
+    if (!el.trafficNewsBody) return;
+    if (err) {
+      el.trafficNewsBody.innerHTML = `<div class="empty-eta">交通消息暫時未能載入</div>`;
+      return;
+    }
+    const list = Array.isArray(items) ? items : [];
+    if (!list.length) {
+      el.trafficNewsBody.innerHTML = `<div class="empty-eta">暫時未有特別交通消息</div>`;
+      return;
+    }
+    const limit = Math.max(1, Number(CFG.trafficNewsLimit) || 8);
+    const relevant = list.filter((x) => x.relevant);
+    const others = list.filter((x) => !x.relevant);
+    const shownRelevant = relevant.slice(0, limit);
+    const remaining = Math.max(0, limit - shownRelevant.length);
+    const shownOthers = others.slice(0, remaining);
+
+    const groups = [];
+    if (shownRelevant.length) {
+      const label =
+        shownOthers.length || relevant.length
+          ? `<div class="traffic-news-group-label">沿線走廊</div>`
+          : '';
+      groups.push(
+        `<div class="traffic-news-group">${label}${shownRelevant.map(renderTrafficNewsItem).join('')}</div>`
+      );
+    }
+    if (shownOthers.length) {
+      const label = shownRelevant.length
+        ? `<div class="traffic-news-group-label">其他消息</div>`
+        : '';
+      groups.push(
+        `<div class="traffic-news-group">${label}${shownOthers.map(renderTrafficNewsItem).join('')}</div>`
+      );
+    }
+    el.trafficNewsBody.innerHTML = groups.join('');
+  }
+
   function escapeHtml(s) {
     return String(s)
       .replace(/&/g, '&amp;')
@@ -1770,11 +1979,21 @@
       console.warn('搜尋 ETA 刷新失敗', err);
     });
 
+    trafficNewsCache = null;
+    trafficNewsCacheAt = 0;
+    const newsPromise = loadTrafficNews()
+      .then((items) => renderTrafficNews(items))
+      .catch((err) => {
+        console.warn('交通消息載入失敗', err);
+        renderTrafficNews([], err);
+      });
+
     const [etaCards, trafficCards] = await Promise.all([
       Promise.all(etaPromises),
       Promise.all(trafficPromises),
       wxPromise,
       searchEtaPromise,
+      newsPromise,
     ]);
 
     if (transitItems.length && el.etaList) {
