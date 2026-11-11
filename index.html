@@ -29,21 +29,19 @@
       <div class="weather-details" id="wx-details"></div>
     </div>
     <div class="weather-tips" id="wx-tips" hidden></div>
+    <div class="weather-forecast" id="wx-forecast" hidden></div>
   </section>
 
   <div class="section-title">道路交通</div>
   <div id="traffic-list" class="traffic-grid" aria-live="polite"></div>
 
-  <div class="section-title">公共交通 ETA</div>
-  <div id="eta-list" class="eta-grid" aria-live="polite"></div>
-
-  <div class="section-title" id="bus-search-heading">搜巴士路線</div>
+  <div class="section-title" id="bus-search-heading">搵巴士路線</div>
   <section class="card search-card" id="bus-search" aria-labelledby="bus-search-heading">
     <form id="bus-search-form" class="bus-search-form" autocomplete="off">
       <label class="visually-hidden" for="bus-search-input">路線號碼</label>
       <input id="bus-search-input" type="search" inputmode="text" enterkeyhint="search"
              placeholder="輸入路線，例如 258D、1A、969" maxlength="8" spellcheck="false" />
-      <button type="submit" id="bus-search-btn">搜索</button>
+      <button type="submit" id="bus-search-btn">搵</button>
     </form>
     <div id="bus-search-status" class="search-status" hidden></div>
     <div id="bus-search-companies" class="search-companies" hidden role="tablist" aria-label="巴士公司"></div>
@@ -52,8 +50,11 @@
     <div id="bus-search-eta" class="search-eta"></div>
   </section>
 
+  <div class="section-title">公共交通 ETA</div>
+  <div id="eta-list" class="eta-grid" aria-live="polite"></div>
+
   <footer class="hint">
-    臨時查其他巴士線：喺「搜巴士路線」輸入路線號碼即可，唔使改 <code>config.js</code>。<br />
+    臨時查其他巴士線：喺「搵巴士路線」輸入路線號碼即可，唔使改 <code>config.js</code>。<br />
     固定三欄同路段：編輯專案入面嘅 <code>config.js</code>，儲存後刷新頁面。<br />
     Weather: 香港天文台開放數據 · Bus: 九巴 data.etabus.gov.hk · 城巴 rt.data.gov.hk<br />
     MTR: 港鐵 Next Train（rt.data.gov.hk，免 API key）<br />

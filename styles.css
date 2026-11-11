@@ -163,6 +163,75 @@ header .sub {
   line-height: 1.3;
 }
 
+.weather-forecast {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+  min-width: 0;
+}
+
+.wx-forecast-source {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin: 0 2px 8px;
+}
+
+.wx-forecast-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.wx-day {
+  flex: 1 0 4.4rem;
+  min-width: 4.4rem;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px 6px 9px;
+  text-align: center;
+}
+
+.wx-day-week {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.wx-day-date {
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  margin-top: 1px;
+}
+
+.wx-day-icon {
+  font-size: 1.35rem;
+  line-height: 1.3;
+  margin: 4px 0 2px;
+}
+
+.wx-day-hi {
+  font-size: 0.8rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.wx-day-hi span {
+  font-weight: 500;
+  color: var(--text-dim);
+  font-size: 0.72rem;
+}
+
+.wx-day-rain {
+  margin-top: 3px;
+  font-size: 0.62rem;
+  color: var(--text-dim);
+  line-height: 1.3;
+}
+
 .section-title {
   font-size: 0.8rem;
   font-weight: 600;
@@ -490,7 +559,7 @@ footer.hint code {
   word-break: break-all;
 }
 
-/* --- 搜巴士路線 --- */
+/* --- 搵巴士路線 --- */
 .visually-hidden {
   position: absolute;
   width: 1px;

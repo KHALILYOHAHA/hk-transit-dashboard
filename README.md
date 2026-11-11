@@ -1,6 +1,6 @@
 # 香港交通 · 天氣看板 / HK Transit + Weather Dashboard
 
-個人用靜態網頁：顯示**香港天氣**（連短提示）＋**九巴實時到站 ETA**＋**港鐵 Next Train**＋**屯門市中心 ↔ 圓方、圓方 ↔ 黃大仙**四段道路車速。手機優先、深色主題、約每 45 秒自動刷新。
+個人用靜態網頁：顯示**香港天氣**（現況、短提示、未來 7 天預報）＋**九巴實時到站 ETA**＋**港鐵 Next Train**＋**屯門市中心 ↔ 圓方、圓方 ↔ 黃大仙**四段道路車速。手機優先、深色主題、約每 1 分鐘自動刷新。
 
 ## 點開 / How to open
 
@@ -26,16 +26,16 @@ python3 server.py
 ```
 
 
-## 搜巴士路線 / Look up any bus route
+## 搵巴士路線 / Look up any bus route
 
-頁面底部「**搜巴士路線**」可以輸入路線號碼（例如 `258D`、`1A`、`969`、`960`）即時查站序同到站時間，**唔使改 `config.js`**。上面固定三欄 ETA 同道路交通唔會被搜尋覆蓋。
+道路交通下面、「公共交通 ETA」前面嘅「**搵巴士路線**」可以輸入路線號碼（例如 `258D`、`1A`、`969`、`960`）即時查站序同到站時間，**唔使改 `config.js`**。固定三欄 ETA 同道路交通唔會被搜尋覆蓋。
 
 用法：
 
-1. 輸入路線，撳「搜索」或按 Enter（唔會喺打字途中不斷拉 API）。
+1. 輸入路線，撳「搵」或按 Enter（唔會喺打字途中不斷拉 API）。
 2. 如果九巴／龍運同城巴都有呢條線，用分段掣揀公司。
 3. 揀方向（起點 → 終點；特別班次會標示服務類型）。
-4. 喺站列表撳一個站，就會顯示該站該線嘅實時 ETA（約每 45 秒同固定欄一齊刷新）。
+4. 喺站列表撳一個站，就會顯示該站該線嘅實時 ETA（約每 1 分鐘同固定欄一齊刷新）。
 5. 可撳「針選此站」記住呢次查詢（存喺瀏覽器 `localStorage`，刷新後會還原）。**唔會自動改 `config.js` 嘅固定欄。**
 
 資料來源：九巴／龍運 `data.etabus.gov.hk`、城巴 `rt.data.gov.hk` 公開 API。
@@ -69,7 +69,7 @@ python3 server.py
    `https://data.etabus.gov.hk/v1/transport/kmb/eta/{stopId}/{route}/{serviceType}`
 
 
-天氣卡會按同一組天文台（或備援 Open-Meteo）數據，在濕度／紫外線下方顯示 1–3 條短提示，例如落雨「拎遮」「小心路滑」、天冷「著多件衫」、炎熱或高紫外線「飲多啲水」「塗防曬」；無特別情況則「天氣清爽，適合輕裝」。
+天氣卡會按同一組天文台（或備援 Open-Meteo）數據，在濕度／紫外線下方顯示 1–3 條短提示，例如落雨「拎遮」「小心路滑」、天冷「著多件衫」、炎熱或高紫外線「飲多啲水」「塗防曬」；無特別情況則「天氣清爽，適合輕裝」。提示下面係未來 7 天天氣：天文台 9 天天氣預報（`dataType=fnd`）取頭 7 日，含圖示、最高／最低氣溫、顯著降雨概率（PSR）；若 7 日預報失敗則改用 Open-Meteo daily，並標示來源。
 
 ### 道路交通 `traffic`（四段走廊）
 
@@ -148,7 +148,8 @@ curl "https://rt.data.gov.hk/v1/transport/mtr/getSchedule.php?line=TWL&sta=ADM&l
 
 | 用途 | 來源 | URL |
 |------|------|-----|
-| 天氣 | 香港天文台開放數據（預設） | `https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread&lang=tc` |
+| 天氣（現況） | 香港天文台開放數據（預設） | `https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread&lang=tc` |
+| 天氣（未來 7 天） | 天文台 9 天天氣預報（取頭 7 日） | `https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=fnd&lang=tc` |
 | 天氣備援 | Open-Meteo（config 可切） | `https://api.open-meteo.com/v1/forecast?...` |
 | 巴士 ETA | 九巴／龍運 Open Data | `https://data.etabus.gov.hk/v1/transport/kmb/...` |
 | 港鐵班次 | MTR Next Train（data.gov.hk） | `https://rt.data.gov.hk/v1/transport/mtr/getSchedule.php?...` |

@@ -41,7 +41,7 @@
  */
 window.HK_DASH_CONFIG = {
   /** 自動刷新秒數 */
-  refreshSeconds: 45,
+  refreshSeconds: 60,
 
   /** 天氣：hko（香港天文台，中文）或 open-meteo */
   weatherProvider: 'hko',

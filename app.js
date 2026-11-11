@@ -11,9 +11,9 @@
     mtr: [],
     traffic: [],
     transit: [],
-    refreshSeconds: 45,
+    refreshSeconds: 60,
   };
-  const REFRESH_MS = Math.max(15, Number(CFG.refreshSeconds) || 45) * 1000;
+  const REFRESH_MS = Math.max(15, Number(CFG.refreshSeconds) || 60) * 1000;
   const KMB_BASE = 'https://data.etabus.gov.hk/v1/transport/kmb';
   const CTB_BASE = 'https://rt.data.gov.hk/v2/transport/citybus';
   const MTR_BASE = 'https://rt.data.gov.hk/v1/transport/mtr/getSchedule.php';
@@ -22,9 +22,12 @@
     'https://resource.data.one.gov.hk/td/traffic-detectors/rawSpeedVol-all.xml';
   const HKO_RHR = 'https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread&lang=tc';
   const HKO_FLW = 'https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=flw&lang=tc';
+  const HKO_FND = 'https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=fnd&lang=tc';
   const OPEN_METEO =
     'https://api.open-meteo.com/v1/forecast?latitude=22.3193&longitude=114.1694' +
-    '&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&timezone=Asia%2FHong_Kong';
+    '&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m' +
+    '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max' +
+    '&forecast_days=8&timezone=Asia%2FHong_Kong';
 
   /** HKO weather icon → emoji + short label (常見編號) */
   const HKO_ICON_MAP = {
@@ -120,6 +123,7 @@
     wxCond: document.getElementById('wx-cond'),
     wxDetails: document.getElementById('wx-details'),
     wxTips: document.getElementById('wx-tips'),
+    wxForecast: document.getElementById('wx-forecast'),
     etaList: document.getElementById('eta-list'),
     trafficList: document.getElementById('traffic-list'),
     lastUpdated: document.getElementById('last-updated'),
@@ -233,8 +237,100 @@
     }
   }
 
+  function hkTodayYmd() {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Hong_Kong',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+  }
+
+  function formatWeekLabel(week, isoDate) {
+    const raw = String(week || '').trim();
+    if (/^星期/.test(raw)) return raw.replace(/^星期/, '週');
+    if (raw) return raw;
+    if (!isoDate) return '';
+    try {
+      return new Intl.DateTimeFormat('zh-HK', {
+        timeZone: 'Asia/Hong_Kong',
+        weekday: 'short',
+      }).format(new Date(`${isoDate}T12:00:00+08:00`));
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function ymdToIso(ymd) {
+    const s = String(ymd || '');
+    if (s.length === 8) return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+    return s;
+  }
+
+  function dateLabelFromIso(iso) {
+    const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return '';
+    return `${Number(m[3])}/${Number(m[2])}`;
+  }
+
+  /** HKO 9-day forecast (dataType=fnd) → first 7 days. PSR = 顯著降雨概率（低／中／高等）。 */
+  function daysFromHkoFnd(fnd) {
+    const rows = Array.isArray(fnd?.weatherForecast) ? fnd.weatherForecast : [];
+    return rows.slice(0, 7).map((row) => {
+      const icon = row.ForecastIcon ?? row.forecastIcon;
+      const mapped = HKO_ICON_MAP[icon] || { emoji: '🌡️', label: '天氣' };
+      const iso = ymdToIso(row.forecastDate);
+      const psr = row.PSR != null && String(row.PSR).trim() ? String(row.PSR).trim() : '';
+      return {
+        week: formatWeekLabel(row.week, iso),
+        dateLabel: dateLabelFromIso(iso),
+        emoji: mapped.emoji,
+        condition: row.forecastWeather || mapped.label,
+        high: row.forecastMaxtemp?.value,
+        low: row.forecastMintemp?.value,
+        rainChance: psr ? `降雨 ${psr}` : null,
+      };
+    });
+  }
+
+  /** Open-Meteo daily; skip today so it matches HKO「未來」7 天. */
+  function daysFromOpenMeteo(data) {
+    const d = data?.daily || {};
+    const dates = Array.isArray(d.time) ? d.time : [];
+    const today = hkTodayYmd();
+    const out = [];
+    for (let i = 0; i < dates.length && out.length < 7; i++) {
+      const iso = dates[i];
+      if (!iso || iso === today) continue;
+      const code = d.weather_code?.[i];
+      const mapped = WMO_MAP[code] || { emoji: '🌡️', label: `代碼 ${code}` };
+      const pop = d.precipitation_probability_max?.[i];
+      const high = d.temperature_2m_max?.[i];
+      const low = d.temperature_2m_min?.[i];
+      out.push({
+        week: formatWeekLabel('', iso),
+        dateLabel: dateLabelFromIso(iso),
+        emoji: mapped.emoji,
+        condition: mapped.label,
+        high: high != null && Number.isFinite(Number(high)) ? Math.round(Number(high)) : null,
+        low: low != null && Number.isFinite(Number(low)) ? Math.round(Number(low)) : null,
+        rainChance: pop != null && pop !== '' ? `降雨 ${Math.round(Number(pop))}%` : null,
+      });
+    }
+    return out;
+  }
+
+  async function loadOpenMeteoForecastDays() {
+    const data = await fetchJson(OPEN_METEO);
+    return daysFromOpenMeteo(data);
+  }
+
   async function loadHko() {
-    const [rhr, flw] = await Promise.all([fetchJson(HKO_RHR), fetchJson(HKO_FLW).catch(() => null)]);
+    const [rhr, flw, fnd] = await Promise.all([
+      fetchJson(HKO_RHR),
+      fetchJson(HKO_FLW).catch(() => null),
+      fetchJson(HKO_FND).catch(() => null),
+    ]);
     const temps = rhr.temperature?.data || [];
     const hko = temps.find((t) => t.place === '香港天文台') || temps[0];
     const humidity = rhr.humidity?.data?.[0]?.value;
@@ -247,7 +343,7 @@
       const v = Number(row?.max);
       return Number.isFinite(v) ? Math.max(m, v) : m;
     }, 0);
-    return {
+    const wx = {
       temp: hko?.value,
       unit: hko?.unit || 'C',
       humidity,
@@ -264,13 +360,25 @@
         `觀測：${hko?.place || '香港'}`,
       ].filter(Boolean),
       source: 'HKO',
+      forecastSource: 'HKO',
+      forecastDays: daysFromHkoFnd(fnd),
     };
+    if (!wx.forecastDays.length) {
+      try {
+        wx.forecastDays = await loadOpenMeteoForecastDays();
+        if (wx.forecastDays.length) wx.forecastSource = 'Open-Meteo';
+      } catch (e) {
+        console.warn('HKO 7-day forecast missing, Open-Meteo fallback failed', e);
+      }
+    }
+    return wx;
   }
 
   async function loadOpenMeteo() {
     const data = await fetchJson(OPEN_METEO);
     const c = data.current || {};
     const mapped = WMO_MAP[c.weather_code] || { emoji: '🌡️', label: `代碼 ${c.weather_code}` };
+    const forecastDays = daysFromOpenMeteo(data);
     return {
       temp: Math.round(c.temperature_2m),
       unit: 'C',
@@ -288,6 +396,8 @@
         'Open-Meteo',
       ].filter(Boolean),
       source: 'Open-Meteo',
+      forecastSource: forecastDays.length ? 'Open-Meteo' : '',
+      forecastDays,
     };
   }
 
@@ -360,6 +470,36 @@
       .join('');
   }
 
+  function renderForecast(days, source) {
+    if (!el.wxForecast) return;
+    if (!days || !days.length) {
+      el.wxForecast.hidden = true;
+      el.wxForecast.innerHTML = '';
+      return;
+    }
+    const srcLabel = source === 'Open-Meteo' ? '未來 7 天 · Open-Meteo' : '未來 7 天 · 香港天文台';
+    const cells = days
+      .map((day) => {
+        const high = day.high != null && day.high !== '' ? String(day.high) : '—';
+        const low = day.low != null && day.low !== '' ? String(day.low) : '—';
+        const rain = day.rainChance
+          ? `<div class="wx-day-rain">${escapeHtml(day.rainChance)}</div>`
+          : '';
+        return `<div class="wx-day" title="${escapeHtml(day.condition || '')}">
+          <div class="wx-day-week">${escapeHtml(day.week || '')}</div>
+          <div class="wx-day-date">${escapeHtml(day.dateLabel || '')}</div>
+          <div class="wx-day-icon">${escapeHtml(day.emoji || '')}</div>
+          <div class="wx-day-hi">${escapeHtml(high)}°<span> / ${escapeHtml(low)}°</span></div>
+          ${rain}
+        </div>`;
+      })
+      .join('');
+    el.wxForecast.hidden = false;
+    el.wxForecast.innerHTML =
+      `<div class="wx-forecast-source">${escapeHtml(srcLabel)}</div>` +
+      `<div class="wx-forecast-row">${cells}</div>`;
+  }
+
   function renderWeather(wx, err) {
     if (err) {
       el.wxIcon.textContent = '⚠️';
@@ -367,6 +507,7 @@
       el.wxCond.textContent = '天氣載入失敗';
       el.wxDetails.innerHTML = `<span class="error-box" style="display:inline-block">${escapeHtml(String(err.message || err))}</span>`;
       renderWeatherTips([]);
+      renderForecast([], '');
       return;
     }
     el.wxIcon.textContent = wx.emoji || '🌡️';
@@ -376,6 +517,7 @@
       .map((d) => `<span>${escapeHtml(d)}</span>`)
       .join('');
     renderWeatherTips(weatherTipsFrom(wx));
+    renderForecast(wx.forecastDays || [], wx.forecastSource || wx.source || '');
   }
 
   async function loadKmbEta(stopCfg) {
@@ -954,7 +1096,7 @@
     });
   }
 
-  /* ---------- 搜巴士路線（獨立於固定 transit[] 三欄） ---------- */
+  /* ---------- 搵巴士路線（獨立於固定 transit[] 三欄） ---------- */
   const SEARCH_LS_KEY = 'hkDashBusSearch';
   const searchState = {
     route: '',
