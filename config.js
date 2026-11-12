@@ -43,8 +43,12 @@ window.HK_DASH_CONFIG = {
   /** 自動刷新秒數 */
   refreshSeconds: 60,
 
-  /** 天氣：hko（香港天文台，中文）或 open-meteo */
-  weatherProvider: 'hko',
+  /**
+   * 天氣來源：
+   *   auto（預設）— 跟裝置位置；香港／鄰近用天文台，其他地方用 Open-Meteo
+   *   hko / open-meteo — 強制來源（香港以外仍會用 Open-Meteo，因天文台只覆蓋本港）
+   */
+  weatherProvider: 'auto',
 
   /**
    * 公共交通 ETA（固定三欄：258D | 960 | 港鐵屯門）

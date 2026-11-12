@@ -125,6 +125,7 @@
     wxTemp: document.getElementById('wx-temp'),
     wxCond: document.getElementById('wx-cond'),
     wxDetails: document.getElementById('wx-details'),
+    wxLoc: document.getElementById('wx-loc'),
     wxTips: document.getElementById('wx-tips'),
     wxForecast: document.getElementById('wx-forecast'),
     etaList: document.getElementById('eta-list'),
@@ -224,23 +225,431 @@
     return res.text();
   }
 
-  async function loadWeather() {
-    const provider = (CFG.weatherProvider || 'hko').toLowerCase();
-    if (provider === 'open-meteo') {
+  const LOC_STORAGE_KEY = 'hkDash.weatherLocation.v1';
+  const GEO_RECHECK_MS = 20 * 60 * 1000;
+  const GEO_TIMEOUT_MS = 8000;
+  const HKO_FALLBACK = { lat: 22.3022, lon: 114.1742, placeName: '香港天文台' };
+  /** 香港範圍加約 15–20 km 緩衝（鄰近亦用天文台） */
+  const HK_BOUNDS = { minLat: 22.12, maxLat: 22.58, minLon: 113.75, maxLon: 114.51 };
+
+  const HKO_TEMP_STATIONS = [
+    { name: '京士柏', lat: 22.3119, lon: 114.1728 },
+    { name: '香港天文台', lat: 22.3019, lon: 114.1743 },
+    { name: '黃竹坑', lat: 22.2478, lon: 114.1736 },
+    { name: '打鼓嶺', lat: 22.5286, lon: 114.1566 },
+    { name: '流浮山', lat: 22.4683, lon: 113.9836 },
+    { name: '大埔', lat: 22.4460, lon: 114.1790 },
+    { name: '沙田', lat: 22.3856, lon: 114.1869 },
+    { name: '屯門', lat: 22.3913, lon: 113.9760 },
+    { name: '將軍澳', lat: 22.3157, lon: 114.2555 },
+    { name: '西貢', lat: 22.3819, lon: 114.2731 },
+    { name: '長洲', lat: 22.2011, lon: 114.0267 },
+    { name: '赤鱲角', lat: 22.3153, lon: 113.9219 },
+    { name: '青衣', lat: 22.3475, lon: 114.1092 },
+    { name: '石崗', lat: 22.4361, lon: 114.0847 },
+    { name: '荃灣可觀', lat: 22.3835, lon: 114.1225 },
+    { name: '荃灣城門谷', lat: 22.3753, lon: 114.1275 },
+    { name: '香港公園', lat: 22.2772, lon: 114.1614 },
+    { name: '筲箕灣', lat: 22.2813, lon: 114.2289 },
+    { name: '九龍城', lat: 22.3283, lon: 114.1914 },
+    { name: '跑馬地', lat: 22.2703, lon: 114.1836 },
+    { name: '黃大仙', lat: 22.3422, lon: 114.1938 },
+    { name: '赤柱', lat: 22.2181, lon: 114.2139 },
+    { name: '觀塘', lat: 22.3115, lon: 114.2264 },
+    { name: '深水埗', lat: 22.3302, lon: 114.1622 },
+    { name: '啟德跑道公園', lat: 22.3069, lon: 114.2133 },
+    { name: '元朗公園', lat: 22.4414, lon: 114.0222 },
+    { name: '大美督', lat: 22.4753, lon: 114.2375 },
+  ];
+
+  const HKO_RAIN_DISTRICTS = [
+    { name: '中西區', lat: 22.280, lon: 114.155 },
+    { name: '東區', lat: 22.284, lon: 114.224 },
+    { name: '葵青', lat: 22.358, lon: 114.129 },
+    { name: '離島區', lat: 22.261, lon: 113.966 },
+    { name: '北區', lat: 22.494, lon: 114.138 },
+    { name: '西貢', lat: 22.382, lon: 114.273 },
+    { name: '沙田', lat: 22.383, lon: 114.188 },
+    { name: '南區', lat: 22.247, lon: 114.167 },
+    { name: '大埔', lat: 22.451, lon: 114.170 },
+    { name: '荃灣', lat: 22.371, lon: 114.114 },
+    { name: '屯門', lat: 22.391, lon: 113.976 },
+    { name: '灣仔', lat: 22.276, lon: 114.173 },
+    { name: '元朗', lat: 22.444, lon: 114.022 },
+    { name: '油尖旺', lat: 22.307, lon: 114.171 },
+    { name: '深水埗', lat: 22.331, lon: 114.163 },
+    { name: '九龍城', lat: 22.328, lon: 114.191 },
+    { name: '黃大仙', lat: 22.343, lon: 114.194 },
+    { name: '觀塘', lat: 22.313, lon: 114.225 },
+  ];
+
+  let locState = { status: '' };
+  let locAskedThisPage = false;
+  let locBgStarted = false;
+
+  function openMeteoForecastUrl(lat, lon) {
+    const la = Number(lat).toFixed(4);
+    const lo = Number(lon).toFixed(4);
+    return (
+      `https://api.open-meteo.com/v1/forecast?latitude=${la}&longitude=${lo}` +
+      '&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,uv_index,precipitation' +
+      '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max' +
+      '&forecast_days=8&timezone=auto'
+    );
+  }
+
+  function haversineKm(aLat, aLon, bLat, bLon) {
+    const toR = (d) => (d * Math.PI) / 180;
+    const dLat = toR(bLat - aLat);
+    const dLon = toR(bLon - aLon);
+    const s =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toR(aLat)) * Math.cos(toR(bLat)) * Math.sin(dLon / 2) ** 2;
+    return 2 * 6371 * Math.asin(Math.sqrt(s));
+  }
+
+  function nearestNamed(lat, lon, list) {
+    let best = null;
+    let bestD = Infinity;
+    list.forEach((row) => {
+      const d = haversineKm(lat, lon, row.lat, row.lon);
+      if (d < bestD) {
+        bestD = d;
+        best = row;
+      }
+    });
+    return best;
+  }
+
+  function isInHongKong(lat, lon, countryHint) {
+    const hint = String(countryHint || '').toUpperCase();
+    if (hint === 'HK' || hint === 'CN-HK') return true;
+    return (
+      lat >= HK_BOUNDS.minLat &&
+      lat <= HK_BOUNDS.maxLat &&
+      lon >= HK_BOUNDS.minLon &&
+      lon <= HK_BOUNDS.maxLon
+    );
+  }
+
+  function todayYmd(timeZone) {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: timeZone || 'Asia/Hong_Kong',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+  }
+
+  function readStoredLoc() {
+    try {
+      const raw = localStorage.getItem(LOC_STORAGE_KEY);
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      const lat = Number(data.lat);
+      const lon = Number(data.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+      return {
+        lat,
+        lon,
+        placeName: String(data.placeName || ''),
+        inHk: !!data.inHk,
+        at: Number(data.at) || 0,
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function writeStoredLoc(loc) {
+    try {
+      localStorage.setItem(
+        LOC_STORAGE_KEY,
+        JSON.stringify({
+          lat: loc.lat,
+          lon: loc.lon,
+          placeName: loc.placeName || '',
+          inHk: !!loc.inHk,
+          at: loc.at || Date.now(),
+        })
+      );
+    } catch (_) { /* private mode */ }
+  }
+
+  function noteFromGeoError(err) {
+    const code = err && err.code;
+    if (code === 'INSECURE') return '此頁需要 HTTPS 先可以讀取位置，已改用香港天文台';
+    if (code === 'UNSUPPORTED') return '裝置不支援定位，已改用香港天文台';
+    if (code === 1) return '未授權位置，已改用香港天文台';
+    if (code === 3) return '定位逾時，已改用香港天文台';
+    return '未能取得位置，已改用香港天文台';
+  }
+
+  function getDevicePosition() {
+    return new Promise((resolve, reject) => {
+      if (!window.isSecureContext) {
+        const err = new Error('insecure context');
+        err.code = 'INSECURE';
+        reject(err);
+        return;
+      }
+      if (!navigator.geolocation) {
+        const err = new Error('geolocation unsupported');
+        err.code = 'UNSUPPORTED';
+        reject(err);
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          resolve({
+            lat: pos.coords.latitude,
+            lon: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+          });
+        },
+        (geoErr) => {
+          const err = new Error(geoErr && geoErr.message ? geoErr.message : 'geolocation');
+          err.code = geoErr ? geoErr.code : 2;
+          reject(err);
+        },
+        { enableHighAccuracy: false, timeout: GEO_TIMEOUT_MS, maximumAge: 5 * 60 * 1000 }
+      );
+    });
+  }
+
+  function tidyHkAreaName(name) {
+    let s = String(name || '').trim();
+    if (!s) return '';
+    s = s.replace(/區$/, '').replace(/市$/, '');
+    if (s === '香港' || s === '新界' || s === '九龍' || s === '香港島') return s;
+    return s;
+  }
+
+  function placeNameFromNominatim(data) {
+    const addr = data && data.address ? data.address : {};
+    const blob = `${data && data.display_name ? data.display_name : ''} ${JSON.stringify(addr)}`;
+    const cc = String(addr.country_code || '').toLowerCase();
+    const inHk =
+      cc === 'hk' ||
+      addr['ISO3166-2-lvl3'] === 'CN-HK' ||
+      /香港|Hong Kong/i.test(blob);
+    if (inHk) {
+      const area =
+        addr.suburb ||
+        addr.town ||
+        addr.city_district ||
+        addr.district ||
+        addr.county ||
+        (String(data.display_name || '').match(/([^,，\s]+區)/) || [])[1] ||
+        '';
+      const tidy = tidyHkAreaName(area);
+      if (tidy && tidy !== '香港') return tidy;
+      return '香港';
+    }
+    const city =
+      addr.city || addr.town || addr.village || addr.suburb || addr.municipality || addr.city_district;
+    const region = addr.state || addr.region || addr.county;
+    const country = addr.country;
+    if (city && region && city !== region) return `${city} · ${region}`;
+    if (city && country && city !== country) return `${city} · ${country}`;
+    return city || region || country || '';
+  }
+
+  function placeNameFromBigDataCloud(data) {
+    const admins = Array.isArray(data && data.localityInfo && data.localityInfo.administrative)
+      ? data.localityInfo.administrative.slice()
+      : [];
+    admins.sort((a, b) => (Number(b.adminLevel) || 0) - (Number(a.adminLevel) || 0));
+    const skip = /^(中華人民共和國|中华人民共和国|中國|中国|亞洲|亚洲|Asia)$/;
+    const names = admins.map((a) => String(a && a.name ? a.name : '').trim()).filter((n) => n && !skip.test(n));
+    const cc = String(data && data.countryCode ? data.countryCode : '').toUpperCase();
+    const inHk = cc === 'HK' || names.includes('香港');
+    if (inHk) {
+      const area = names.find((n) => /區$/.test(n) || n === '新界' || n === '九龍' || n === '香港島') || names[0];
+      const tidy = tidyHkAreaName(area);
+      return tidy && tidy !== '香港' ? tidy : '香港';
+    }
+    const locality = data && (data.locality || data.city);
+    const region = data && data.principalSubdivision;
+    const country = data && data.countryName;
+    if (locality && region && locality !== region) return `${locality} · ${region}`;
+    if (locality && country && locality !== country) return `${locality} · ${country}`;
+    return locality || region || country || names[0] || '';
+  }
+
+  async function reverseGeocode(lat, lon) {
+    const nomUrl =
+      'https://nominatim.openstreetmap.org/reverse?format=jsonv2' +
+      `&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}` +
+      '&accept-language=zh-HK,zh-Hant,zh,en&addressdetails=1';
+    try {
+      const data = await fetchJson(nomUrl);
+      const name = placeNameFromNominatim(data);
+      if (name) return name;
+    } catch (e) {
+      console.warn('Nominatim reverse geocode failed', e);
+    }
+    const bdcUrl =
+      'https://api-bdc.io/data/reverse-geocode-client' +
+      `?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}` +
+      '&localityLanguage=zh-Hant';
+    const data = await fetchJson(bdcUrl);
+    return placeNameFromBigDataCloud(data) || '';
+  }
+
+  function attachLocationMeta(wx, loc) {
+    wx.placeName = loc.placeName || (loc.inHk ? '香港' : '');
+    wx.locationNote = loc.note || '';
+    wx.locationStatus = loc.status || '';
+    wx.inHk = !!loc.inHk;
+    wx.lat = loc.lat;
+    wx.lon = loc.lon;
+    return wx;
+  }
+
+  async function applyDevicePosition(pos, prev) {
+    let placeName = prev && prev.placeName ? prev.placeName : '';
+    const sameCell =
+      prev &&
+      prev.lat != null &&
+      Number(prev.lat).toFixed(3) === Number(pos.lat).toFixed(3) &&
+      Number(prev.lon).toFixed(3) === Number(pos.lon).toFixed(3) &&
+      placeName;
+    if (!sameCell) {
       try {
-        return await loadOpenMeteo();
+        placeName = (await reverseGeocode(pos.lat, pos.lon)) || placeName;
       } catch (e) {
-        console.warn('Open-Meteo failed, try HKO', e);
-        return loadHko();
+        console.warn('reverse geocode failed', e);
+      }
+    }
+    const inHk = isInHongKong(pos.lat, pos.lon);
+    if (!placeName) {
+      if (inHk) {
+        const st = nearestNamed(pos.lat, pos.lon, HKO_TEMP_STATIONS);
+        placeName = st ? st.name : '香港';
+      } else {
+        placeName = `${Number(pos.lat).toFixed(2)}, ${Number(pos.lon).toFixed(2)}`;
+      }
+    }
+    const next = {
+      lat: pos.lat,
+      lon: pos.lon,
+      placeName,
+      inHk,
+      status: 'gps',
+      note: '',
+      at: Date.now(),
+    };
+    locState = next;
+    writeStoredLoc(next);
+    return next;
+  }
+
+  function refreshDeviceLocationInBackground() {
+    if (locBgStarted) return;
+    locBgStarted = true;
+    const prev = { ...locState };
+    getDevicePosition()
+      .then((pos) => applyDevicePosition(pos, prev))
+      .then((next) => {
+        const moved =
+          prev.lat == null ||
+          prev.status === 'cache' ||
+          prev.status === 'fallback' ||
+          haversineKm(prev.lat, prev.lon, next.lat, next.lon) > 2;
+        if (moved) {
+          return loadWeather().then((wx) => renderWeather(wx));
+        }
+        return null;
+      })
+      .catch((err) => {
+        console.warn('background geolocation failed', err);
+      });
+  }
+
+  async function resolveWeatherLocation(opts) {
+    const force = !!(opts && opts.force);
+    const now = Date.now();
+    const stored = readStoredLoc();
+
+    if (
+      !force &&
+      locAskedThisPage &&
+      locState.lat != null &&
+      now - (locState.at || 0) < GEO_RECHECK_MS
+    ) {
+      return locState;
+    }
+
+    if (!force && !locAskedThisPage && stored && stored.lat != null) {
+      locAskedThisPage = true;
+      locState = { ...stored, status: 'cache', note: '' };
+      refreshDeviceLocationInBackground();
+      return locState;
+    }
+
+    locAskedThisPage = true;
+    if (force) locBgStarted = true;
+
+    try {
+      const pos = await getDevicePosition();
+      return await applyDevicePosition(pos, locState.lat != null ? locState : stored);
+    } catch (err) {
+      console.warn('geolocation failed', err);
+      if (!force && stored && stored.lat != null) {
+        locState = { ...stored, status: 'cache', note: '' };
+        return locState;
+      }
+      locState = {
+        lat: HKO_FALLBACK.lat,
+        lon: HKO_FALLBACK.lon,
+        placeName: HKO_FALLBACK.placeName,
+        inHk: true,
+        status: 'fallback',
+        note: noteFromGeoError(err),
+        at: now,
+      };
+      return locState;
+    }
+  }
+
+  function initWeatherLocationControls() {
+    if (!el.weather) return;
+    el.weather.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-wx-locate]');
+      if (!btn) return;
+      btn.disabled = true;
+      locBgStarted = true;
+      resolveWeatherLocation({ force: true })
+        .then(() => loadWeather())
+        .then((wx) => renderWeather(wx))
+        .catch((err) => renderWeather(null, err))
+        .finally(() => {
+          btn.disabled = false;
+        });
+    });
+  }
+
+  async function loadWeather() {
+    const loc = await resolveWeatherLocation();
+    const provider = (CFG.weatherProvider || 'auto').toLowerCase();
+    const preferOm = provider === 'open-meteo' || !loc.inHk;
+    if (!preferOm) {
+      try {
+        return attachLocationMeta(await loadHko(loc), loc);
+      } catch (e) {
+        console.warn('HKO failed, try Open-Meteo', e);
+        return attachLocationMeta(await loadOpenMeteo(loc), loc);
       }
     }
     try {
-      return await loadHko();
+      return attachLocationMeta(await loadOpenMeteo(loc), loc);
     } catch (e) {
-      console.warn('HKO failed, try Open-Meteo', e);
-      return loadOpenMeteo();
+      console.warn('Open-Meteo failed, try HKO', e);
+      return attachLocationMeta(await loadHko(loc), loc);
     }
   }
+
 
   function hkTodayYmd() {
     return new Intl.DateTimeFormat('en-CA', {
@@ -251,16 +660,16 @@
     }).format(new Date());
   }
 
-  function formatWeekLabel(week, isoDate) {
+  function formatWeekLabel(week, isoDate, timeZone) {
     const raw = String(week || '').trim();
     if (/^星期/.test(raw)) return raw.replace(/^星期/, '週');
     if (raw) return raw;
     if (!isoDate) return '';
     try {
       return new Intl.DateTimeFormat('zh-HK', {
-        timeZone: 'Asia/Hong_Kong',
+        timeZone: timeZone || 'Asia/Hong_Kong',
         weekday: 'short',
-      }).format(new Date(`${isoDate}T12:00:00+08:00`));
+      }).format(new Date(`${isoDate}T12:00:00Z`));
     } catch (_) {
       return '';
     }
@@ -302,7 +711,8 @@
   function daysFromOpenMeteo(data) {
     const d = data?.daily || {};
     const dates = Array.isArray(d.time) ? d.time : [];
-    const today = hkTodayYmd();
+    const tz = data?.timezone || 'Asia/Hong_Kong';
+    const today = todayYmd(tz);
     const out = [];
     for (let i = 0; i < dates.length && out.length < 7; i++) {
       const iso = dates[i];
@@ -313,7 +723,7 @@
       const high = d.temperature_2m_max?.[i];
       const low = d.temperature_2m_min?.[i];
       out.push({
-        week: formatWeekLabel('', iso),
+        week: formatWeekLabel('', iso, tz),
         dateLabel: dateLabelFromIso(iso),
         emoji: mapped.emoji,
         condition: mapped.label,
@@ -325,29 +735,40 @@
     return out;
   }
 
-  async function loadOpenMeteoForecastDays() {
-    const data = await fetchJson(OPEN_METEO);
+  async function loadOpenMeteoForecastDays(lat, lon) {
+    const data = await fetchJson(openMeteoForecastUrl(lat, lon));
     return daysFromOpenMeteo(data);
   }
 
-  async function loadHko() {
+  async function loadHko(loc) {
     const [rhr, flw, fnd] = await Promise.all([
       fetchJson(HKO_RHR),
       fetchJson(HKO_FLW).catch(() => null),
       fetchJson(HKO_FND).catch(() => null),
     ]);
     const temps = rhr.temperature?.data || [];
-    const hko = temps.find((t) => t.place === '香港天文台') || temps[0];
+    let hko = temps.find((t) => t.place === '香港天文台') || temps[0];
+    if (loc && loc.lat != null && loc.lon != null) {
+      const st = nearestNamed(loc.lat, loc.lon, HKO_TEMP_STATIONS);
+      const match = st && temps.find((t) => t.place === st.name);
+      if (match) hko = match;
+    }
     const humidity = rhr.humidity?.data?.[0]?.value;
     const iconCode = Array.isArray(rhr.icon) ? rhr.icon[0] : rhr.icon;
     const mapped = HKO_ICON_MAP[iconCode] || { emoji: '🌡️', label: '天氣' };
     const forecast = flw?.forecastDesc || flw?.generalSituation || '';
     const uv = rhr.uvindex?.data?.[0];
     const rainRows = Array.isArray(rhr.rainfall?.data) ? rhr.rainfall.data : [];
-    const rainfallMax = rainRows.reduce((m, row) => {
+    let rainfallMax = rainRows.reduce((m, row) => {
       const v = Number(row?.max);
       return Number.isFinite(v) ? Math.max(m, v) : m;
     }, 0);
+    if (loc && loc.lat != null && loc.lon != null) {
+      const dist = nearestNamed(loc.lat, loc.lon, HKO_RAIN_DISTRICTS);
+      const row = dist && rainRows.find((r) => r.place === dist.name);
+      const v = row != null ? Number(row.max) : NaN;
+      if (Number.isFinite(v)) rainfallMax = v;
+    }
     const wx = {
       temp: hko?.value,
       unit: hko?.unit || 'C',
@@ -370,7 +791,9 @@
     };
     if (!wx.forecastDays.length) {
       try {
-        wx.forecastDays = await loadOpenMeteoForecastDays();
+        const fla = loc && loc.lat != null ? loc.lat : HKO_FALLBACK.lat;
+        const flo = loc && loc.lon != null ? loc.lon : HKO_FALLBACK.lon;
+        wx.forecastDays = await loadOpenMeteoForecastDays(fla, flo);
         if (wx.forecastDays.length) wx.forecastSource = 'Open-Meteo';
       } catch (e) {
         console.warn('HKO 7-day forecast missing, Open-Meteo fallback failed', e);
@@ -379,26 +802,34 @@
     return wx;
   }
 
-  async function loadOpenMeteo() {
-    const data = await fetchJson(OPEN_METEO);
+  async function loadOpenMeteo(loc) {
+    const lat = loc && loc.lat != null ? loc.lat : 22.3193;
+    const lon = loc && loc.lon != null ? loc.lon : 114.1694;
+    const data = await fetchJson(openMeteoForecastUrl(lat, lon));
     const c = data.current || {};
     const mapped = WMO_MAP[c.weather_code] || { emoji: '🌡️', label: `代碼 ${c.weather_code}` };
     const forecastDays = daysFromOpenMeteo(data);
+    const uvVal = c.uv_index;
+    let uvDesc = '';
+    if (uvVal != null && Number.isFinite(Number(uvVal))) {
+      const u = Number(uvVal);
+      uvDesc = u >= 11 ? '極高' : u >= 8 ? '甚高' : u >= 6 ? '高' : u >= 3 ? '中等' : '低';
+    }
     return {
       temp: Math.round(c.temperature_2m),
       unit: 'C',
       humidity: c.relative_humidity_2m,
       iconCode: c.weather_code,
-      uvValue: null,
-      uvDesc: '',
-      rainfallMax: null,
+      uvValue: uvVal != null ? uvVal : null,
+      uvDesc,
+      rainfallMax: c.precipitation != null ? c.precipitation : null,
       wxLabel: mapped.label,
       emoji: mapped.emoji,
       condition: mapped.label,
       details: [
         c.relative_humidity_2m != null ? `濕度 ${c.relative_humidity_2m}%` : null,
+        uvVal != null && Number.isFinite(Number(uvVal)) ? `紫外線 ${Math.round(Number(uvVal) * 10) / 10}（${uvDesc}）` : null,
         c.wind_speed_10m != null ? `風速 ${c.wind_speed_10m} km/h` : null,
-        'Open-Meteo',
       ].filter(Boolean),
       source: 'Open-Meteo',
       forecastSource: forecastDays.length ? 'Open-Meteo' : '',
@@ -505,6 +936,35 @@
       `<div class="wx-forecast-row">${cells}</div>`;
   }
 
+  function renderWeatherLocation(wx) {
+    if (!el.wxLoc) return;
+    const status = wx && wx.locationStatus;
+    const source = !wx ? '' : wx.source === 'Open-Meteo' ? 'Open-Meteo' : '香港天文台';
+    const place = wx && wx.placeName ? wx.placeName : '';
+    const label = place && source && place === source ? place : [place, source].filter(Boolean).join(' · ');
+    const note = wx && wx.locationNote ? wx.locationNote : '';
+    const btnLabel = status === 'fallback' || !status ? '使用裝置位置' : '更新位置';
+    const btnHtml =
+      status === 'fallback' || status === 'cache' || !wx
+        ? `<button type="button" data-wx-locate>${escapeHtml(btnLabel)}</button>`
+        : status === 'gps'
+          ? `<button type="button" data-wx-locate>更新位置</button>`
+          : '';
+    if (!label && !note && !btnHtml) {
+      el.wxLoc.hidden = true;
+      el.wxLoc.innerHTML = '';
+      return;
+    }
+    el.wxLoc.hidden = false;
+    el.wxLoc.innerHTML = [
+      label ? `<span class="weather-loc-name">${escapeHtml(label)}</span>` : '',
+      note ? `<span class="weather-loc-note">${escapeHtml(note)}</span>` : '',
+      btnHtml,
+    ]
+      .filter(Boolean)
+      .join('');
+  }
+
   function renderWeather(wx, err) {
     if (err) {
       el.wxIcon.textContent = '⚠️';
@@ -513,6 +973,12 @@
       el.wxDetails.innerHTML = `<span class="error-box" style="display:inline-block">${escapeHtml(String(err.message || err))}</span>`;
       renderWeatherTips([]);
       renderForecast([], '');
+      renderWeatherLocation({
+        locationStatus: 'fallback',
+        locationNote: '天氣載入失敗，可再試裝置位置',
+        placeName: '',
+        source: 'HKO',
+      });
       return;
     }
     el.wxIcon.textContent = wx.emoji || '🌡️';
@@ -523,6 +989,7 @@
       .join('');
     renderWeatherTips(weatherTipsFrom(wx));
     renderForecast(wx.forecastDays || [], wx.forecastSource || wx.source || '');
+    renderWeatherLocation(wx);
   }
 
   async function loadKmbEta(stopCfg) {
@@ -2037,5 +2504,6 @@
     el.etaList.innerHTML = `<div class="card error-box">缺少 config.js</div>`;
   }
   initBusSearch();
+  initWeatherLocationControls();
   loop();
 })();

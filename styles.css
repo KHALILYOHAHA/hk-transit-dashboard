@@ -142,6 +142,44 @@ header .sub {
   color: var(--text-dim);
 }
 
+.weather-loc {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.weather-loc-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.weather-loc-note {
+  flex: 1 1 12rem;
+}
+
+.weather-loc button {
+  appearance: none;
+  background: var(--bg-elev);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 5px 11px;
+  cursor: pointer;
+}
+
+.weather-loc button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .weather-tips {
   grid-column: 1 / -1;
   display: flex;

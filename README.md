@@ -1,6 +1,6 @@
 # 香港交通 · 天氣看板 / HK Transit + Weather Dashboard
 
-個人用靜態網頁：顯示**香港天氣**（現況、短提示、未來 7 天預報）＋**九巴實時到站 ETA**＋**港鐵 Next Train**＋**屯門市中心 ↔ 圓方、圓方 ↔ 黃大仙**四段道路車速。手機優先、深色主題、約每 1 分鐘自動刷新。
+個人用靜態網頁：顯示**跟裝置位置嘅天氣**（現況、短提示、未來 7 天預報；香港用天文台，其他地方用 Open-Meteo）＋**九巴實時到站 ETA**＋**港鐵 Next Train**＋**屯門市中心 ↔ 圓方、圓方 ↔ 黃大仙**四段道路車速。手機優先、深色主題、約每 1 分鐘自動刷新。
 
 ## 點開 / How to open
 
@@ -69,7 +69,9 @@ python3 server.py
    `https://data.etabus.gov.hk/v1/transport/kmb/eta/{stopId}/{route}/{serviceType}`
 
 
-天氣卡會按同一組天文台（或備援 Open-Meteo）數據，在濕度／紫外線下方顯示 1–3 條短提示，例如落雨「拎遮」「小心路滑」、天冷「著多件衫」、炎熱或高紫外線「飲多啲水」「塗防曬」；無特別情況則「天氣清爽，適合輕裝」。提示下面係未來 7 天天氣：天文台 9 天天氣預報（`dataType=fnd`）取頭 7 日，含圖示、最高／最低氣溫、顯著降雨概率（PSR）；若 7 日預報失敗則改用 Open-Meteo daily，並標示來源。
+天氣卡會跟瀏覽器定位（需 HTTPS 或 localhost，並經你授權）顯示該地天氣。香港／鄰近用天文台開放數據（揀最近嘅氣溫站），其他地方用 Open-Meteo；地點名稱用公開反向地理編碼（OpenStreetMap Nominatim，失敗則 BigDataCloud）。授權被拒、逾時或非安全上下文時，會退回香港天文台，並顯示短說明同「使用裝置位置」掣。成功嘅座標會存喺 `localStorage`，每 60 秒只刷新天氣、唔會不停問 GPS（每次載入頁面或每隔約 20 分鐘先再定位）。
+
+提示仍按該地溫度／濕度／紫外線／雨況顯示 1–3 條短提示，例如落雨「拎遮」「小心路滑」、天冷「著多件衫」、炎熱或高紫外線「飲多啲水」「塗防曬」；無特別情況則「天氣清爽，適合輕裝」。提示下面係未來 7 天：香港用天文台 9 天天氣預報（`dataType=fnd`）取頭 7 日（圖示、最高／最低、顯著降雨概率 PSR）；其他地方或天文台預報失敗則用 Open-Meteo daily，並標示來源同地點。
 
 ### 道路交通 `traffic`（四段走廊）
 
@@ -152,9 +154,9 @@ curl "https://rt.data.gov.hk/v1/transport/mtr/getSchedule.php?line=TWL&sta=ADM&l
 
 | 用途 | 來源 | URL |
 |------|------|-----|
-| 天氣（現況） | 香港天文台開放數據（預設） | `https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread&lang=tc` |
-| 天氣（未來 7 天） | 天文台 9 天天氣預報（取頭 7 日） | `https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=fnd&lang=tc` |
-| 天氣備援 | Open-Meteo（config 可切） | `https://api.open-meteo.com/v1/forecast?...` |
+| 天氣（香港現況／7 天） | 香港天文台開放數據（裝置喺香港時） | `https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread` / `fnd` |
+| 天氣（其他地區） | Open-Meteo forecast（該地緯度／經度） | `https://api.open-meteo.com/v1/forecast?latitude=…&longitude=…` |
+| 地點名稱 | OSM Nominatim（備援 BigDataCloud） | `https://nominatim.openstreetmap.org/reverse` |
 | 巴士 ETA | 九巴／龍運 Open Data | `https://data.etabus.gov.hk/v1/transport/kmb/...` |
 | 港鐵班次 | MTR Next Train（data.gov.hk） | `https://rt.data.gov.hk/v1/transport/mtr/getSchedule.php?...` |
 | 道路車速 | 運輸署主要幹道交通偵測器 Raw | `https://resource.data.one.gov.hk/td/traffic-detectors/rawSpeedVol-all.xml` |
